@@ -127,7 +127,8 @@ class OpenAIClient:
             "temperature": 0.2,
             "top_p": 1.0,
             # OpenAI uses max_tokens
-            "max_tokens": max(2000, min(12000, 900 + int(item_target) * 20)),
+            "max_tokens": min(800, 900 + int(item_target) * 20),
+            #"max_tokens": max(2000, min(12000, 900 + int(item_target) * 20)),
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
