@@ -49,7 +49,7 @@ async def lifespan(_: FastAPI):
     openai_client = await exit_stack.enter_async_context(
         httpx.AsyncClient(
             base_url=str(settings.openai_api_url),
-            timeout=httpx.Timeout(60.0, connect=10.0),
+            timeout=httpx.Timeout(300.0, connect=10.0),
         )
     )
     metadata_client_kwargs: dict[str, Any] = {
