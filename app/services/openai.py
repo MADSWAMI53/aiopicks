@@ -125,8 +125,8 @@ class OpenAIClient:
 
         payload = {
             "model": model,
-            "temperature": 0.95,
-            "top_p": 0.95,
+            "temperature": 0.2,
+            "top_p": 1.0,
             # OpenAI uses max_tokens
             "max_tokens": max(2000, min(12000, 900 + int(item_target) * 20)),
             "messages": [
