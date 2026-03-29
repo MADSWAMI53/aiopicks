@@ -53,7 +53,7 @@ async def lifespan(_: FastAPI):
         )
     )
     metadata_client_kwargs: dict[str, Any] = {
-        "timeout": httpx.Timeout(15.0, connect=5.0)
+        "timeout": httpx.Timeout(3.0, connect=2.0)
     }
     if settings.metadata_addon_url:
         metadata_client_kwargs["base_url"] = str(settings.metadata_addon_url)
