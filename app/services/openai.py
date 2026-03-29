@@ -28,7 +28,6 @@ SYSTEM_PROMPT = (
     "the documented schema and never include commentary outside JSON."
 )
 
-
 class OpenAIClient:
     """Client responsible for talking to OpenAI's /chat/completions endpoint."""
 
