@@ -1489,14 +1489,16 @@ class CatalogService:
                     profile.openai_model = self._settings.openai_model
                     updated = True
                 # Keep generator_mode in sync with settings if missing
-                if not getattr(profile, "generator_mode", None):
-                    profile.generator_mode = getattr(self._settings, "generator_mode", "openrouter")
-                    # If AI selected but no key, force local
+                current_mode = getattr(profile, "generator_mode", None)
+                desired_mode = getattr(self._settings, "generator_mode", "openrouter")
+                if current_mode != desired_mode:
+                    profile.generator_mode = desired_mode
                     if profile.generator_mode == "openrouter" and not self._settings.openrouter_api_key:
                         profile.generator_mode = "local"
                     if profile.generator_mode == "openai" and not self._settings.openai_api_key:
                         profile.generator_mode = "local"
                     updated = True
+
                 if getattr(profile, "catalog_item_count", None) != self._settings.catalog_item_count:
                     profile.catalog_item_count = self._settings.catalog_item_count
                     updated = True
