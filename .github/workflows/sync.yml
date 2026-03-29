@@ -1,0 +1,18 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: '0 3 * * *' # Runs daily at 3 AM UTC
+  workflow_dispatch: # Allows you to run it manually
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Sync fork with upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh repo sync ${{ github.repository }} --branch main
