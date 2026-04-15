@@ -1088,24 +1088,30 @@ class CatalogService:
             return
 
         # Cap total enrichment time so a large catalog doesn't block the response
-        # indefinitely. Incomplete lookups are treated as misses.
+        # indefinitely. asyncio.wait returns immediately after the timeout and
+        # leaves pending tasks alive so we can cancel them cleanly — avoids the
+        # CancelledError pitfall of asyncio.wait_for with pre-created Tasks.
         _ENRICH_TIMEOUT = 20.0
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*lookup_tasks.values(), return_exceptions=True),
-                timeout=_ENRICH_TIMEOUT,
-            )
-        except asyncio.TimeoutError:
+        task_list = list(lookup_tasks.values())
+        done, pending = await asyncio.wait(task_list, timeout=_ENRICH_TIMEOUT)
+        if pending:
             logger.warning(
                 "Metadata enrichment timed out after %.0fs with %d pending lookups; "
                 "serving partial results",
                 _ENRICH_TIMEOUT,
-                len(lookup_tasks),
+                len(pending),
             )
-            results = [
-                t.result() if t.done() and not t.exception() else None
-                for t in lookup_tasks.values()
-            ]
+            for task in pending:
+                task.cancel()
+
+        results = []
+        for t in task_list:
+            if t in pending or t.cancelled():
+                results.append(None)
+            elif (exc := t.exception()) is not None:
+                results.append(exc)
+            else:
+                results.append(t.result())
         matches: dict[tuple[str, str, int | None], MetadataMatch] = {}
         for key, result in zip(lookup_tasks.keys(), results):
             if isinstance(result, Exception):
