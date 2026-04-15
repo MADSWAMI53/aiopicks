@@ -1113,6 +1113,10 @@ class CatalogService:
                         continue
                     key = (item.type, title.casefold(), item.year)
                     if key in looked_up_keys and key not in matches:
+                        # Keep items that already have an imdb_id even if cinemeta
+                        # couldn't match them by title — they just won't get a poster.
+                        if item.imdb_id:
+                            updated_items.append(item)
                         continue
                     match = matches.get(key)
                     if match is None:
