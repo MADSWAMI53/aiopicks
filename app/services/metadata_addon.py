@@ -94,9 +94,10 @@ class MetadataAddonClient:
                 return None
             except httpx.HTTPError as exc:
                 logger.warning(
-                    "Metadata add-on lookup failed for %s via %s: %s",
+                    "Metadata add-on lookup failed for %s via %s: %s(%s)",
                     normalized_title,
                     effective_base,
+                    type(exc).__name__,
                     exc,
                 )
                 return None
