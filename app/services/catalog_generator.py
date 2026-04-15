@@ -1087,9 +1087,25 @@ class CatalogService:
         if not lookup_tasks:
             return
 
-        results = await asyncio.gather(
-            *lookup_tasks.values(), return_exceptions=True
-        )
+        # Cap total enrichment time so a large catalog doesn't block the response
+        # indefinitely. Incomplete lookups are treated as misses.
+        _ENRICH_TIMEOUT = 20.0
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*lookup_tasks.values(), return_exceptions=True),
+                timeout=_ENRICH_TIMEOUT,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Metadata enrichment timed out after %.0fs with %d pending lookups; "
+                "serving partial results",
+                _ENRICH_TIMEOUT,
+                len(lookup_tasks),
+            )
+            results = [
+                t.result() if t.done() and not t.exception() else None
+                for t in lookup_tasks.values()
+            ]
         matches: dict[tuple[str, str, int | None], MetadataMatch] = {}
         for key, result in zip(lookup_tasks.keys(), results):
             if isinstance(result, Exception):
