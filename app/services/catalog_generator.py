@@ -2141,11 +2141,14 @@ class CatalogService:
             return results
 
         catalogs: dict[str, dict[str, Catalog]] = {"movie": {}, "series": {}}
-        # Cache candidates per content type and source
-        candidate_cache: dict[str, dict[str, list[dict[str, Any]]]] = {
+        # Cache candidates per content type and source.
+        # None = not yet fetched; [] = fetched but empty. The distinction prevents
+        # the cache from being rebuilt on every lane when a pool legitimately returns
+        # no results (which is falsy and would otherwise bypass the guard below).
+        candidate_cache: dict[str, dict[str, list[dict[str, Any]] | None]] = {
             # favor recommendation/related over generic pools
-            "movie": {"recommended": [], "related": [], "popular": [], "trending": []},
-            "series": {"recommended": [], "related": [], "popular": [], "trending": []},
+            "movie": {"recommended": None, "related": None, "popular": None, "trending": None},
+            "series": {"recommended": None, "related": None, "popular": None, "trending": None},
         }
         # Track session-wide uniqueness across all lanes per content type
         session_seen: dict[str, set[tuple[str, int | None]]] = {"movie": set(), "series": set()}
@@ -3003,7 +3006,7 @@ class CatalogService:
             if prefer_related_order:
                 pool_order = ("related", "recommended", "trending", "popular")
             # Use lane-local pools if we constructed them above (e.g., international, people)
-            if lane_local_pools is None and not all(candidate_cache[content_type].get(src) for src in pool_order):
+            if lane_local_pools is None and any(candidate_cache[content_type].get(src) is None for src in pool_order):
                 # IMPORTANT: Build the shared candidate cache with broad filters only.
                 # Lane-specific genre/language constraints are applied later by apply_filters.
                 genres_filter = None
@@ -3183,7 +3186,7 @@ class CatalogService:
             # Phase 1: strict filters, prefer recommended/related first
             for src in source_order:
                 _try_collect(
-                    pools.get(src, []),
+                    pools.get(src) or [],
                     include_genres=include,
                     exclude_genres=exclude,
                     language_pred=lang_pred,
@@ -3198,7 +3201,7 @@ class CatalogService:
                 new_lang = saved_lang if keep_language_strict else None
                 for src in source_order:
                     _try_collect(
-                        pools.get(src, []),
+                        pools.get(src) or [],
                         include_genres=include,
                         exclude_genres=exclude,
                         language_pred=new_lang,
@@ -3210,7 +3213,7 @@ class CatalogService:
             if len(lane) < item_limit:
                 for src in source_order:
                     _try_collect(
-                        pools.get(src, []),
+                        pools.get(src) or [],
                         include_genres=(include if keep_genre_strict else None),
                         exclude_genres=None,
                         # Keep language constraint for international lane
@@ -3224,7 +3227,7 @@ class CatalogService:
             if len(lane) < item_limit and served_fps:
                 for src in source_order:
                     _try_collect(
-                        pools.get(src, []),
+                        pools.get(src) or [],
                         include_genres=(include if keep_genre_strict else None),
                         exclude_genres=None,
                         language_pred=(lang_pred if keep_language_strict else None),
