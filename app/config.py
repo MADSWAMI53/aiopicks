@@ -142,14 +142,7 @@ class Settings(BaseSettings):
     def _sync_catalog_configuration(self) -> "Settings":
         """Ensure catalog counts mirror the configured keys."""
 
-        expected = len(self.catalog_keys)
-        if "catalog_count" in self.model_fields_set:
-            if self.catalog_count != expected:
-                raise ValueError(
-                    "CATALOG_COUNT must match the number of configured catalog keys"
-                )
-        else:
-            self.catalog_count = expected
+        self.catalog_count = len(self.catalog_keys)
         return self
 
     @property
