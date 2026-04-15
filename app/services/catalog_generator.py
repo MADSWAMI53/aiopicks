@@ -1091,7 +1091,7 @@ class CatalogService:
         # indefinitely. asyncio.wait returns immediately after the timeout and
         # leaves pending tasks alive so we can cancel them cleanly — avoids the
         # CancelledError pitfall of asyncio.wait_for with pre-created Tasks.
-        _ENRICH_TIMEOUT = 20.0
+        _ENRICH_TIMEOUT = 60.0
         task_list = list(lookup_tasks.values())
         done, pending = await asyncio.wait(task_list, timeout=_ENRICH_TIMEOUT)
         if pending:
