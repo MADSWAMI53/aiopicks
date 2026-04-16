@@ -84,23 +84,29 @@ class CatalogItem(BaseModel):
                 return str(candidate)
         return "Untitled"
 
-    def build_meta_id(self, catalog_id: str, index: int) -> str:
+    def build_meta_id(
+        self,
+        catalog_id: str,
+        index: int,
+        *,
+        display_title: str | None = None,
+    ) -> str:
         """Return the unique identifier used for catalog/meta lookups."""
 
-        base_id = self.imdb_id or (
-            f"trakt:{self.trakt_id}" if self.trakt_id else ""
-        )
+        resolved_title = display_title if display_title is not None else self.display_title()
+        base_id = self.imdb_id or (f"trakt:{self.trakt_id}" if self.trakt_id else "")
         if not base_id and self.tmdb_id:
             base_id = f"tmdb:{self.tmdb_id}"
-        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.display_title()}", index)
+        return ensure_unique_meta_id(base_id, f"{catalog_id}-{resolved_title}", index)
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
         """Return a Stremio-compatible meta object for catalog listings."""
 
+        display_title = self.display_title()
         meta: dict[str, object] = {
-            "id": self.build_meta_id(catalog_id, index),
+            "id": self.build_meta_id(catalog_id, index, display_title=display_title),
             "type": self.type,
-            "name": self.display_title(),
+            "name": display_title,
         }
         meta["genres"] = list(self.genres)
 

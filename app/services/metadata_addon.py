@@ -144,41 +144,46 @@ class MetadataAddonClient:
 
         target_slug = slugify(title)
 
-        def candidate_year(meta: dict[str, Any]) -> int | None:
-            return self._parse_year(meta.get("releaseInfo") or meta.get("year"))
+        prepared: list[tuple[dict[str, Any], str, int | None]] = []
+        for meta in candidates:
+            prepared.append(
+                (
+                    meta,
+                    slugify(str(meta.get("name") or "")),
+                    self._parse_year(meta.get("releaseInfo") or meta.get("year")),
+                )
+            )
 
         exact_year_matches = [
             meta
-            for meta in candidates
-            if slugify(str(meta.get("name") or "")) == target_slug
-            and year is not None
-            and candidate_year(meta) == year
+            for meta, meta_slug, meta_year in prepared
+            if meta_slug == target_slug and year is not None and meta_year == year
         ]
         if exact_year_matches:
             return exact_year_matches[0]
 
         exact_title_matches = [
-            meta
-            for meta in candidates
-            if slugify(str(meta.get("name") or "")) == target_slug
+            (meta, meta_year)
+            for meta, meta_slug, meta_year in prepared
+            if meta_slug == target_slug
         ]
         if year is not None and exact_title_matches:
-            exact_title_matches.sort(
-                key=lambda meta: self._year_delta(candidate_year(meta), year)
+            best_meta, _ = min(
+                exact_title_matches,
+                key=lambda entry: self._year_delta(entry[1], year),
             )
-            return exact_title_matches[0]
+            return best_meta
 
         if year is not None:
-            scored = sorted(
-                candidates,
-                key=lambda meta: self._year_delta(candidate_year(meta), year),
+            best_meta, _, best_year = min(
+                prepared,
+                key=lambda entry: self._year_delta(entry[2], year),
             )
-            best = scored[0]
-            if candidate_year(best) is not None:
-                return best
+            if best_year is not None:
+                return best_meta
 
         if exact_title_matches:
-            return exact_title_matches[0]
+            return exact_title_matches[0][0]
 
         return candidates[0]
 
