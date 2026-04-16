@@ -587,18 +587,20 @@ class CatalogService:
             use_local = True
 
         if use_local:
+            _target = state.catalog_item_count
             catalogs = await self._generate_local_catalogs(
                 movie_history,
                 show_history,
                 definitions=definitions,
                 seed=seed,
-                item_limit=state.catalog_item_count,
+                item_limit=int(_target * 1.5),
                 watched=watched_index,
                 served=served_index,
                 trakt_client_id=state.trakt_client_id,
                 trakt_access_token=state.trakt_access_token,
             )
             await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+            self._truncate_catalogs(catalogs, _target)
         else:
             try:
                 if mode == "openai":
@@ -641,18 +643,20 @@ class CatalogService:
         if catalogs is None:
             # Prefer full local generation over tiny fallback so all selected lanes appear
             try:
+                _target = state.catalog_item_count
                 catalogs = await self._generate_local_catalogs(
                     movie_history,
                     show_history,
                     definitions=definitions,
                     seed=seed,
-                    item_limit=state.catalog_item_count,
+                    item_limit=int(_target * 1.5),
                     watched=watched_index,
                     served=served_index,
                     trakt_client_id=state.trakt_client_id,
                     trakt_access_token=state.trakt_access_token,
                 )
                 await self._enrich_catalogs_with_metadata(catalogs, metadata_url)
+                self._truncate_catalogs(catalogs, _target)
             except Exception:
                 # As a last resort, surface simple history compilations
                 catalogs = self._build_fallback_catalogs(
@@ -1130,14 +1134,14 @@ class CatalogService:
                 for item in catalog.items:
                     title = (item.title or "").strip()
                     if not title:
-                        if item.imdb_id and item.poster:
+                        if item.imdb_id or item.trakt_id or item.tmdb_id:
                             updated_items.append(item)
                         continue
                     key = (item.type, title.casefold(), item.year)
                     if key in looked_up_keys and key not in matches:
-                        # Keep items that already have an imdb_id even if cinemeta
-                        # couldn't match them by title — they just won't get a poster.
-                        if item.imdb_id:
+                        # Keep anything with at least one identifier — AIOmetadata
+                        # will enrich the card regardless of whether cinemeta matched.
+                        if item.imdb_id or item.trakt_id or item.tmdb_id:
                             updated_items.append(item)
                         continue
                     match = matches.get(key)
@@ -1663,6 +1667,19 @@ class CatalogService:
                         )
 
         return WatchedMediaIndex(fingerprints=fingerprints, recent_titles=titles[:40])
+
+    def _truncate_catalogs(
+        self,
+        catalogs: dict[str, dict[str, Catalog]],
+        item_limit: int,
+    ) -> None:
+        """Trim each catalog to item_limit after enrichment drops."""
+        for catalog_map in catalogs.values():
+            for catalog_id, catalog in list(catalog_map.items()):
+                if len(catalog.items) > item_limit:
+                    catalog_map[catalog_id] = catalog.model_copy(
+                        update={"items": catalog.items[:item_limit]}
+                    )
 
     def _prune_watched_items(
         self,
