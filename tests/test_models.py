@@ -27,6 +27,7 @@ def test_catalog_from_ai_payload_generates_ids():
         "id": "tt0359950",
         "type": "movie",
         "name": "The Secret Life of Walter Mitty",
+        "genres": [],
         "description": "A daydreamer's journey",
         "poster": "https://example.com/poster.jpg",
         "year": 2013,
@@ -64,6 +65,7 @@ def test_catalog_item_uses_tmdb_id_when_other_ids_missing() -> None:
     stub = item.to_catalog_stub("aiopicks-movie-demo", 0)
     assert stub["id"] == "tmdb:12345"
     assert stub["type"] == "movie"
+    assert stub["genres"] == []
     assert stub["tmdbId"] == 12345
     assert stub["tmdb_id"] == 12345
     assert stub["name"] == "Example"
@@ -73,4 +75,5 @@ def test_catalog_item_stub_falls_back_to_id_for_blank_title() -> None:
     item = CatalogItem(title="  ", type="movie", imdb_id="tt7654321")
     stub = item.to_catalog_stub("aiopicks-movie-demo", 0)
     assert stub["id"] == "tt7654321"
+    assert stub["genres"] == []
     assert stub["name"] == "tt7654321"

@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 from .utils import ensure_unique_meta_id, slugify
 
@@ -34,6 +34,38 @@ class CatalogItem(BaseModel):
     genres: list[str] = Field(default_factory=list)
     maturity_rating: str | None = None
     providers: list[str] = Field(default_factory=list)
+
+    @field_validator("genres", mode="before")
+    @classmethod
+    def _normalise_genres(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+
+        raw_values: list[object]
+        if isinstance(value, str):
+            raw_values = [part for part in value.replace(";", ",").split(",")]
+        elif isinstance(value, (list, tuple, set)):
+            raw_values = list(value)
+        else:
+            return []
+
+        placeholders = {"none", "null", "unknown", "n/a", "na", "-"}
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for entry in raw_values:
+            if not isinstance(entry, str):
+                continue
+            candidate = entry.strip()
+            if not candidate:
+                continue
+            lowered = candidate.lower()
+            if lowered in placeholders:
+                continue
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            cleaned.append(candidate)
+        return cleaned
 
     def display_title(self) -> str:
         """Return a human-friendly title for preview cards."""
@@ -70,6 +102,7 @@ class CatalogItem(BaseModel):
             "type": self.type,
             "name": self.display_title(),
         }
+        meta["genres"] = list(self.genres)
 
         if self.overview:
             meta["description"] = self.overview
