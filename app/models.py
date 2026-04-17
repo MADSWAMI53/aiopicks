@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
@@ -177,32 +177,42 @@ class Catalog(BaseModel):
             description=str(description) if description else None,
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc)
+
         )
 
     def to_manifest_entry(self) -> dict[str, object]:
-        """Return a manifest catalog entry."""
-
+        all_genres: list[str] = sorted({
+            g for item in self.items for g in item.genres
+        })
+        extra: list[dict[str, object]] = []
+        if all_genres:
+            extra.append({
+                "name": "genre",
+                "options": all_genres,
+                "isRequired": False,
+            })
         return {
             "type": self.type,
             "id": self.id,
             "name": self.title,
-            "idProperty": "imdb_id",
-            "extra": [],
-        }
+            "extra": extra,
+    }
 
-    def to_catalog_response(self) -> dict[str, object]:
-        """Return the Stremio catalog payload."""
-
+    def to_catalog_response(
+        self,
+        genre: str | None = None,
+    ) -> dict[str, object]:
+        items = self.items
+        if genre:
+            items = [
+                i for i in items
+                if any(g.lower() == genre.lower() for g in i.genres)
+            ]
         metas = [
             item.to_catalog_stub(self.id, index)
-            for index, item in enumerate(self.items)
+            for index, item in enumerate(items)
         ]
-        return {
-            "metas": metas,
-            "catalogName": self.title,
-            "catalogDescription": self.description,
-        }
 
 
 class CatalogBundle(BaseModel):
