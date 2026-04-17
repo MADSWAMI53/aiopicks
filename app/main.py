@@ -172,15 +172,16 @@ def register_routes(fastapi_app: FastAPI) -> None:
     ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
+        
         if extra:
             extra_params = dict(param.split("=", 1) for param in extra.split("&") if "=" in param)
             if "skip" in extra_params:
                 try:
                     if int(extra_params["skip"]) > 0:
-                        # If skip > 0, return empty to prevent looping or 404s
                         return JSONResponse({"metas": []})
                 except ValueError:
                     pass
+            genre_filter = extra_params.get("genre")
         service = get_catalog_service(fastapi_app)
         if profile_id is None:
             inferred = service.profile_id_from_catalog_id(catalog_id)
@@ -194,13 +195,16 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
         try:
             payload = await service.get_catalog_payload(
-                config, content_type, catalog_id
+                config, content_type, catalog_id, genre=genre_filter
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if payload is None:
+            return JSONResponse({"metas": []})
         return JSONResponse(payload)
+
 
     @fastapi_app.get("/healthz")
     async def healthcheck() -> dict[str, str]:
