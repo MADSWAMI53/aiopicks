@@ -201,18 +201,24 @@ class Catalog(BaseModel):
 
     def to_catalog_response(
         self,
+        *,
         genre: str | None = None,
     ) -> dict[str, object]:
+        """Return the Stremio catalog payload."""
+ 
         items = self.items
         if genre:
-            items = [
-                i for i in items
-                if any(g.lower() == genre.lower() for g in i.genres)
-            ]
+            genre_lower = genre.lower()
+            items = [i for i in items if any(g.lower() == genre_lower for g in i.genres)]
         metas = [
             item.to_catalog_stub(self.id, index)
             for index, item in enumerate(items)
         ]
+        return {
+            "metas": metas,
+            "catalogName": self.title,
+            "catalogDescription": self.description,
+        }
 
 
 class CatalogBundle(BaseModel):

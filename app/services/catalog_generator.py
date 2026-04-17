@@ -398,9 +398,11 @@ class CatalogService:
         config: ManifestConfig,
         content_type: str,
         catalog_id: str,
+        *,
+        genre: str | None = None,
     ) -> dict[str, Any]:
-        """Return the catalog payload for a profile/content combination."""
-
+        """Return the catalog payload for a profile/content combination.""" 
+        
         state: ProfileState | None = None
         try:
             state = await self.prepare_profile(config, wait_for_refresh=True)
@@ -410,15 +412,17 @@ class CatalogService:
         if state is not None:
             catalog = await self._load_single_catalog(state.id, content_type, catalog_id)
             if catalog is not None:
-                return catalog.to_catalog_response()
-
+                return catalog.to_catalog_response(genre=genre)
+            
         fallback_catalog = await self._load_catalog_any_profile(
             catalog_id, content_type=content_type
         )
         if fallback_catalog is not None:
-            return fallback_catalog.to_catalog_response()
+            return fallback_catalog.to_catalog_response(genre=genre)
         profile_ref = state.id if state is not None else "unknown"
         raise KeyError(f"Catalog {catalog_id} not found for profile {profile_ref}")
+
+
 
     async def prepare_profile(
         self, config: ManifestConfig, *, wait_for_refresh: bool = True
