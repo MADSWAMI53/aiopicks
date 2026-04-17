@@ -172,7 +172,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
     ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
-        
+        genre_filter: str | None = None
         if extra:
             extra_params = dict(param.split("=", 1) for param in extra.split("&") if "=" in param)
             if "skip" in extra_params:
