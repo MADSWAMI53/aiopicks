@@ -64,7 +64,7 @@ class CatalogItem(BaseModel):
             if lowered in seen:
                 continue
             seen.add(lowered)
-            cleaned.append(candidate)
+            cleaned.append(candidate.title())
         return cleaned
 
     def display_title(self) -> str:
