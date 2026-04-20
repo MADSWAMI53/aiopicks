@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     )
 
     # Discovery engine selection: "openrouter", "openai", or "local"
-    generator_mode: Literal["openrouter", "openai", "local"] = Field(
+    generator_mode: Literal["openrouter", "openai", "ollama","local"] = Field(
         default="local", alias="GENERATOR_MODE"
     )
 
@@ -93,6 +93,12 @@ class Settings(BaseSettings):
     )
     openai_api_url: HttpUrl = Field(
         default="https://api.openai.com/v1", alias="OPENAI_API_URL"
+    )
+    ollama_model: str = Field(
+    default="mistral:7b-instruct-q4_K_M", alias="OLLAMA_MODEL"
+    )
+    ollama_api_url: HttpUrl = Field(
+        default="https://llm.elijahb5088.cc", alias="OLLAMA_API_URL"
     )
     metadata_addon_url: HttpUrl | None = Field(
         default=None,

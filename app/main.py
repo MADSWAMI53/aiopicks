@@ -23,6 +23,7 @@ from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
 from .services.openai import OpenAIClient
 from .services.trakt import TraktClient
+from .services.ollama import OllamaClient
 from .web import render_config_page
 
 logging.basicConfig(level=logging.INFO)
@@ -52,6 +53,13 @@ async def lifespan(_: FastAPI):
             timeout=httpx.Timeout(300.0, connect=10.0),
         )
     )
+    ollama_client = await exit_stack.enter_async_context(
+        httpx.AsyncClient(
+            base_url=str(settings.ollama_api_url),
+            timeout=httpx.Timeout(120.0, connect=5.0),
+        )
+    )
+    ollama = OllamaClient(settings, ollama_client)
     metadata_client_kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(3.0, connect=2.0)
     }
@@ -75,7 +83,7 @@ async def lifespan(_: FastAPI):
         metadata_http_client, default_metadata_addon
     )
     catalog_service = CatalogService(
-        settings, trakt, openrouter, openai, metadata_client, database.session_factory
+        settings, trakt, openrouter, openai, ollama, metadata_client, database.session_factory
     )
 
     app.state.catalog_service = catalog_service

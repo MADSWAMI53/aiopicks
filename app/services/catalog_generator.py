@@ -32,6 +32,7 @@ from ..utils import slugify
 from .metadata_addon import MetadataAddonClient, MetadataMatch
 from .openrouter import OpenRouterClient
 from .openai import OpenAIClient
+from .ollama import OllamaClient
 from .trakt import HistoryBatch, TraktClient
 
 logger = logging.getLogger(__name__)
@@ -216,7 +217,9 @@ class ManifestConfig(BaseModel):
             return "openai"
         if lowered in {"local", "offline"}:
             return "local"
-        raise ValueError("generator mode must be 'openrouter' or 'local'")
+        if lowered in {"ollama", "local-llm"}:
+            return "ollama"
+        raise ValueError("generator mode must be 'openrouter', 'openai', 'ollama',  or 'local'")
 
 
 @dataclass
@@ -332,6 +335,7 @@ class CatalogService:
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
         openai_client: OpenAIClient,
+        ollama_client: OllamaClient,
         metadata_client: MetadataAddonClient,
         session_factory: async_sessionmaker[AsyncSession],
     ):
@@ -339,6 +343,7 @@ class CatalogService:
         self._trakt = trakt_client
         self._openrouter = openrouter_client
         self._openai = openai_client
+        self._ollama = ollama_client
         self._metadata_client = metadata_client
         self._session_factory = session_factory
         self._default_metadata_addon_url = getattr(
@@ -589,6 +594,15 @@ class CatalogService:
             use_local = True
         elif mode == "openai" and not bool(getattr(state, "openai_api_key", "")):
             use_local = True
+        elif mode == "ollama":
+            bundle = await self._ollama.generate_catalogs(
+                summary,
+                seed=seed,
+                model=getattr(state, "ollama_model", None) or self._settings.ollama_model,
+                exclusions=exclusion_payload,
+                retry_limit=state.generation_retry_limit,
+                definitions=definitions,
+            )
 
         if use_local:
             _target = state.catalog_item_count
@@ -613,6 +627,15 @@ class CatalogService:
                         seed=seed,
                         api_key=state.openai_api_key,
                         model=(state.openai_model or self._settings.openai_model),
+                        exclusions=exclusion_payload,
+                        retry_limit=state.generation_retry_limit,
+                        definitions=definitions,
+                    )
+                elif mode == "ollama":
+                    bundle = await self._ollama.generate_catalogs(
+                        summary,
+                        seed=seed,
+                        model=getattr(state, "ollama_model", None) or self._settings.ollama_model,
                         exclusions=exclusion_payload,
                         retry_limit=state.generation_retry_limit,
                         definitions=definitions,
