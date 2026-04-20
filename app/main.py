@@ -168,9 +168,20 @@ def register_routes(fastapi_app: FastAPI) -> None:
         catalog_id: str,
         *,
         profile_id: str | None = None,
+        extra: str | None = None,
     ) -> JSONResponse:
         if content_type not in {"movie", "series"}:
             raise HTTPException(status_code=400, detail="Unsupported content type")
+        genre_filter: str | None = None
+        if extra:
+            extra_params = dict(param.split("=", 1) for param in extra.split("&") if "=" in param)
+            if "skip" in extra_params:
+                try:
+                    if int(extra_params["skip"]) > 0:
+                        return JSONResponse({"metas": []})
+                except ValueError:
+                    pass
+            genre_filter = extra_params.get("genre")
         service = get_catalog_service(fastapi_app)
         if profile_id is None:
             inferred = service.profile_id_from_catalog_id(catalog_id)
@@ -184,13 +195,16 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=exc.errors()) from exc
         try:
             payload = await service.get_catalog_payload(
-                config, content_type, catalog_id
+                config, content_type, catalog_id, genre=genre_filter
             )
         except KeyError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if payload is None:
+            return JSONResponse({"metas": []})
         return JSONResponse(payload)
+
 
     @fastapi_app.get("/healthz")
     async def healthcheck() -> dict[str, str]:
@@ -240,21 +254,22 @@ def register_routes(fastapi_app: FastAPI) -> None:
     ) -> dict[str, Any]:
         return await _manifest_endpoint(request, profile_id=profile_id)
 
+    @fastapi_app.get("/catalog/{content_type}/{catalog_id}/{extra}.json")
     @fastapi_app.get("/catalog/{content_type}/{catalog_id}.json")
     async def catalog(
-        request: Request, content_type: str, catalog_id: str
+        request: Request, content_type: str, catalog_id: str, extra: str = None
     ) -> JSONResponse:
-        return await _catalog_endpoint(request, content_type, catalog_id)
+        # We catch the extra parameter here to prevent the 404.
+        # You may need to pass 'extra' to _catalog_endpoint to handle the skip logic.
+        return await _catalog_endpoint(request, content_type, catalog_id, extra=extra)
 
-    @fastapi_app.get(
-        "/profiles/{profile_id}/catalog/{content_type}/{catalog_id}.json"
-    )
+    @fastapi_app.get("/profiles/{profile_id}/catalog/{content_type}/{catalog_id}/{extra}.json")
+    @fastapi_app.get("/profiles/{profile_id}/catalog/{content_type}/{catalog_id}.json")
     async def catalog_with_profile(
-        request: Request, profile_id: str, content_type: str, catalog_id: str
+        request: Request, profile_id: str, content_type: str, catalog_id: str, extra: str = None
     ) -> JSONResponse:
-        return await _catalog_endpoint(
-            request, content_type, catalog_id, profile_id=profile_id
-        )
+        # Same here for the profile-specific catalogs
+        return await _catalog_endpoint(request, content_type, catalog_id, profile_id=profile_id, extra=extra)
 
     @fastapi_app.post("/api/profile/prepare")
     async def prepare_profile_endpoint(request: Request) -> JSONResponse:

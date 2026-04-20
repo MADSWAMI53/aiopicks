@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
@@ -84,23 +84,29 @@ class CatalogItem(BaseModel):
                 return str(candidate)
         return "Untitled"
 
-    def build_meta_id(self, catalog_id: str, index: int) -> str:
+    def build_meta_id(
+        self,
+        catalog_id: str,
+        index: int,
+        *,
+        display_title: str | None = None,
+    ) -> str:
         """Return the unique identifier used for catalog/meta lookups."""
 
-        base_id = self.imdb_id or (
-            f"trakt:{self.trakt_id}" if self.trakt_id else ""
-        )
+        resolved_title = display_title if display_title is not None else self.display_title()
+        base_id = self.imdb_id or (f"trakt:{self.trakt_id}" if self.trakt_id else "")
         if not base_id and self.tmdb_id:
             base_id = f"tmdb:{self.tmdb_id}"
-        return ensure_unique_meta_id(base_id, f"{catalog_id}-{self.display_title()}", index)
+        return ensure_unique_meta_id(base_id, f"{catalog_id}-{resolved_title}", index)
 
     def to_catalog_stub(self, catalog_id: str, index: int) -> dict[str, object]:
         """Return a Stremio-compatible meta object for catalog listings."""
 
+        display_title = self.display_title()
         meta: dict[str, object] = {
-            "id": self.build_meta_id(catalog_id, index),
+            "id": self.build_meta_id(catalog_id, index, display_title=display_title),
             "type": self.type,
-            "name": self.display_title(),
+            "name": display_title,
         }
         meta["genres"] = list(self.genres)
 
@@ -171,26 +177,42 @@ class Catalog(BaseModel):
             description=str(description) if description else None,
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc)
+
         )
 
     def to_manifest_entry(self) -> dict[str, object]:
-        """Return a manifest catalog entry."""
-
+        all_genres: list[str] = sorted({
+            g for item in self.items for g in item.genres
+        })
+        extra: list[dict[str, object]] = []
+        if all_genres:
+            extra.append({
+                "name": "genre",
+                "options": all_genres,
+                "isRequired": False,
+            })
         return {
             "type": self.type,
             "id": self.id,
             "name": self.title,
-            "idProperty": "imdb_id",
-            "extra": [],
-        }
+            "extra": extra,
+    }
 
-    def to_catalog_response(self) -> dict[str, object]:
+    def to_catalog_response(
+        self,
+        *,
+        genre: str | None = None,
+    ) -> dict[str, object]:
         """Return the Stremio catalog payload."""
-
+ 
+        items = self.items
+        if genre:
+            genre_lower = genre.lower()
+            items = [i for i in items if any(g.lower() == genre_lower for g in i.genres)]
         metas = [
             item.to_catalog_stub(self.id, index)
-            for index, item in enumerate(self.items)
+            for index, item in enumerate(items)
         ]
         return {
             "metas": metas,
