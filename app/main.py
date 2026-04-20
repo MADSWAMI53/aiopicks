@@ -113,7 +113,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    fastapi_app.state.trakt_oauth_states: dict[str, dict[str, Any]] = {}
+    fastapi_app.state.trakt_oauth_states = {}  # dict[str, dict[str, Any]]
 
     register_routes(fastapi_app)
     return fastapi_app
@@ -156,6 +156,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
         manifest_id = "com.aiopicks.python"
         if isinstance(manifest_suffix, str) and manifest_suffix.strip():
             manifest_id = f"{manifest_id}.{manifest_suffix.strip()}"
+        base_url = str(request.base_url).rstrip("/")
+        profile_path = f"/profiles/{manifest_suffix}" if manifest_suffix else ""
+        transport_url = f"{base_url}{profile_path}/manifest.json"
         manifest_name = (config.manifest_name or "").strip()
         if not manifest_name:
             manifest_name = settings.app_name
@@ -167,7 +170,8 @@ def register_routes(fastapi_app: FastAPI) -> None:
             "catalogs": catalogs,
             "resources": ["catalog"],
             "types": ["movie", "series"],
-            "idPrefixes": ["aiopicks", "tt", "trakt"],
+            "idPrefixes": ["aiopicks", "tt", "trakt", "tmdb"],
+            "transportURL": transport_url,
         }
 
     async def _catalog_endpoint(

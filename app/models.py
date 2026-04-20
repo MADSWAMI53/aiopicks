@@ -122,12 +122,14 @@ class CatalogItem(BaseModel):
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
             meta["imdb_id"] = self.imdb_id
+            meta["behaviorHints"] = {"defaultVideoId": self.imdb_id}
+        elif self.tmdb_id:
+            meta["behaviorHints"] = {"defaultVideoId": f"tmdb:{self.tmdb_id}"}
         if self.trakt_id:
             meta["traktId"] = self.trakt_id
         if self.tmdb_id:
             meta["tmdbId"] = self.tmdb_id
             meta["tmdb_id"] = self.tmdb_id
-
         return meta
 
 
