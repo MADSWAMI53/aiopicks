@@ -203,7 +203,11 @@ def register_routes(fastapi_app: FastAPI) -> None:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if payload is None:
             return JSONResponse({"metas": []})
-        return JSONResponse(payload)
+        return JSONResponse(
+            payload,
+            headers={"Cache-Control": f"public, max-age={settings.response_cache_seconds}"},
+        )
+
 
 
     @fastapi_app.get("/healthz")
@@ -235,24 +239,34 @@ def register_routes(fastapi_app: FastAPI) -> None:
         return overrides
 
     @fastapi_app.get("/manifest.json")
-    async def manifest(request: Request) -> dict[str, Any]:
-        return await _manifest_endpoint(request)
+    async def manifest(request: Request) -> JSONResponse:
+        return JSONResponse(
+            await _manifest_endpoint(request),
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
+
 
     @fastapi_app.get("/manifest/{path_params:path}/manifest.json")
     async def manifest_with_path_overrides(
         request: Request, path_params: str
-    ) -> dict[str, Any]:
+    ) -> JSONResponse:
         try:
             overrides = _parse_path_overrides(path_params)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return await _manifest_endpoint(request, extra_params=overrides)
+        return JSONResponse(
+            await _manifest_endpoint(request, extra_params=overrides),
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     @fastapi_app.get("/profiles/{profile_id}/manifest.json")
     async def manifest_with_profile(
         request: Request, profile_id: str
-    ) -> dict[str, Any]:
-        return await _manifest_endpoint(request, profile_id=profile_id)
+    ) -> JSONResponse:
+        return JSONResponse(
+            await _manifest_endpoint(request, profile_id=profile_id),
+            headers={"Cache-Control": "public, max-age=3600"},
+        )
 
     @fastapi_app.get("/catalog/{content_type}/{catalog_id}/{extra}.json")
     @fastapi_app.get("/catalog/{content_type}/{catalog_id}.json")

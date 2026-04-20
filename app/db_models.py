@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint
@@ -10,6 +10,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
 from .stable_catalogs import STABLE_CATALOG_COUNT
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class Profile(Base):
@@ -31,7 +35,7 @@ class Profile(Base):
     trakt_movie_history_count: Mapped[int] = mapped_column(Integer, default=0)
     trakt_show_history_count: Mapped[int] = mapped_column(Integer, default=0)
     trakt_history_refreshed_at: Mapped[datetime | None] = mapped_column(
-        DateTime, nullable=True
+        DateTime(timezone=True), nullable=True
     )
     trakt_history_snapshot: Mapped[dict[str, Any] | None] = mapped_column(
         JSON, nullable=True
@@ -43,13 +47,13 @@ class Profile(Base):
     refresh_interval_seconds: Mapped[int] = mapped_column(Integer, default=43_200)
     response_cache_seconds: Mapped[int] = mapped_column(Integer, default=1_800)
     metadata_addon_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
-    next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    next_refresh_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_refreshed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
     catalogs: Mapped[list["CatalogRecord"]] = relationship(
@@ -76,13 +80,13 @@ class CatalogRecord(Base):
     seed: Mapped[str | None] = mapped_column(String(32), nullable=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
     payload: Mapped[dict[str, object]] = mapped_column(JSON)
-    generated_at: Mapped[datetime] = mapped_column(DateTime)
-    expires_at: Mapped[datetime] = mapped_column(DateTime)
+    generated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow
     )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
     )
 
     profile: Mapped[Profile] = relationship(back_populates="catalogs")

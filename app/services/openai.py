@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Sequence
 
 import httpx
@@ -175,7 +175,7 @@ class OpenAIClient:
             description=definition.description,
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
         )
 
 

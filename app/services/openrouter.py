@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Sequence
 
 import httpx
@@ -241,7 +241,7 @@ class OpenRouterClient:
             description=definition.description,
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
         )
 
     def _build_definition_prompt(
@@ -267,7 +267,7 @@ class OpenRouterClient:
             avoid_list = "none supplied—use the history context to stay fresh."
 
         return CATALOG_REQUEST_TEMPLATE.format(
-            generated_at=summary.get("generated_at", datetime.utcnow().isoformat()),
+            generated_at=summary.get("generated_at", datetime.now(timezone.utc).isoformat()),
             lifetime_summary=summary.get(
                 "lifetime_summary", "Lifetime stats unavailable."
             ),

@@ -10,7 +10,7 @@ import random
 from contextlib import suppress
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timezone, timedelta
 from typing import Any, Mapping, Sequence
 
 from pydantic import (
@@ -468,7 +468,7 @@ class CatalogService:
                 logger.exception("Scheduled refresh failed: %s", exc)
 
     async def _refresh_due_profiles(self) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         async with self._session_factory() as session:
             stmt = select(Profile.id).where(
                 Profile.next_refresh_at.is_not(None),
@@ -490,9 +490,9 @@ class CatalogService:
         if not has_catalogs:
             return True, has_catalogs
         expires_at = state.last_refreshed_at + timedelta(
-            seconds=state.response_cache_seconds
+            seconds=state.refresh_interval_seconds  # <-- was response_cache_seconds
         )
-        return datetime.utcnow() >= expires_at, has_catalogs
+        return datetime.now(timezone.utc) >= expires_at, has_catalogs
 
     async def _has_catalogs(self, profile_id: str) -> bool:
         async with self._session_factory() as session:
@@ -678,7 +678,7 @@ class CatalogService:
         state: ProfileState,
         catalogs: dict[str, dict[str, Catalog]],
     ) -> None:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         scoped_catalogs = self._scope_catalog_payloads(state.id, catalogs)
         async with self._session_factory() as session:
             await session.execute(
@@ -835,11 +835,11 @@ class CatalogService:
         timestamp: datetime | None = None
         if movie_total is not None:
             state.trakt_movie_history_count = movie_total
-            timestamp = datetime.utcnow()
+            timestamp = datetime.now(timezone.utc)
         if show_total is not None:
             state.trakt_show_history_count = show_total
             if timestamp is None:
-                timestamp = datetime.utcnow()
+                timestamp = datetime.now(timezone.utc)
         if snapshot is not None:
             state.trakt_history_snapshot = snapshot or None
         if timestamp is not None:
@@ -881,7 +881,7 @@ class CatalogService:
                     profile, "trakt_history_refreshed_at", None
                 )
             if updated:
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 profile.updated_at = now
                 await session.commit()
 
@@ -946,7 +946,7 @@ class CatalogService:
             return state
 
         refreshed_at = state.trakt_history_refreshed_at
-        if refreshed_at and datetime.utcnow() - refreshed_at < timedelta(hours=12):
+        if refreshed_at and datetime.now(timezone.utc) - refreshed_at < timedelta(hours=12):
             return state
 
         movie_batch, show_batch = await asyncio.gather(
@@ -1214,7 +1214,7 @@ class CatalogService:
             profile = await session.get(Profile, profile_id)
             created = False
             refresh_required = False
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
 
             if profile is None:
                 desired_mode = (
@@ -1466,7 +1466,7 @@ class CatalogService:
     async def _ensure_default_profile(self) -> None:
         async with self._session_factory() as session:
             profile = await session.get(Profile, "default")
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             if profile is None:
                 # Decide default generator mode
                 default_mode = getattr(self._settings, "generator_mode", "openrouter")
@@ -1760,7 +1760,7 @@ class CatalogService:
         )
 
         summary: dict[str, Any] = {
-            "generated_at": datetime.utcnow().isoformat(),
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "catalog_item_count": catalog_item_count,
             "profile": {
                 "movies": movie_profile,
@@ -1959,7 +1959,7 @@ class CatalogService:
             catalogs["series"][catalog.id] = catalog
 
         if not catalogs["movie"] and not catalogs["series"]:
-            now = datetime.utcnow()
+            now = datetime.now(timezone.utc)
             stub_catalog = Catalog(
                 id=f"aiopicks-movie-stub-{seed}",
                 type="movie",
@@ -2019,7 +2019,7 @@ class CatalogService:
             description=f"Curated from your recent {content_type} history.",
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
         )
 
     def _unique_media_from_history(
@@ -2097,7 +2097,7 @@ class CatalogService:
             description=description or f"Local picks curated from your {content_type} history.",
             seed=seed,
             items=items,
-            generated_at=datetime.utcnow(),
+            generated_at=datetime.now(timezone.utc),
         )
 
     async def _generate_local_catalogs(
@@ -2206,7 +2206,7 @@ class CatalogService:
         }
 
         # Simple year recency helper (scaled 0..1, favoring recent releases)
-        current_year = datetime.utcnow().year
+        current_year = datetime.now(timezone.utc).year
         def _recency_score(year: int | None) -> float:
             if not isinstance(year, int) or year < 1900 or year > current_year + 1:
                 return 0.0
