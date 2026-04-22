@@ -28,7 +28,7 @@ from ..config import Settings, DEFAULT_CATALOG_KEYS
 from ..db_models import CatalogRecord, Profile
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
-from ..utils import slugify
+from ..utils import ensure_utc_datetime, slugify
 from .metadata_addon import MetadataAddonClient, MetadataMatch
 from .openrouter import OpenRouterClient
 from .openai import OpenAIClient
@@ -490,11 +490,12 @@ class CatalogService:
 
     async def _needs_refresh(self, state: ProfileState) -> tuple[bool, bool]:
         has_catalogs = await self._has_catalogs(state.id)
-        if state.last_refreshed_at is None:
+        last_refreshed_at = ensure_utc_datetime(state.last_refreshed_at)
+        if last_refreshed_at is None:
             return True, has_catalogs
         if not has_catalogs:
             return True, has_catalogs
-        expires_at = state.last_refreshed_at + timedelta(
+        expires_at = last_refreshed_at + timedelta(
             seconds=state.refresh_interval_seconds  # <-- was response_cache_seconds
         )
         return datetime.now(timezone.utc) >= expires_at, has_catalogs
@@ -789,8 +790,8 @@ class CatalogService:
                 "trakt_history_limit",
                 self._settings.trakt_history_limit,
             ),
-            next_refresh_at=profile.next_refresh_at,
-            last_refreshed_at=profile.last_refreshed_at,
+            next_refresh_at=ensure_utc_datetime(profile.next_refresh_at),
+            last_refreshed_at=ensure_utc_datetime(profile.last_refreshed_at),
             metadata_addon_url=getattr(profile, "metadata_addon_url", None),
             trakt_movie_history_count=getattr(
                 profile, "trakt_movie_history_count", 0
@@ -798,8 +799,8 @@ class CatalogService:
             trakt_show_history_count=getattr(
                 profile, "trakt_show_history_count", 0
             ),
-            trakt_history_refreshed_at=getattr(
-                profile, "trakt_history_refreshed_at", None
+            trakt_history_refreshed_at=ensure_utc_datetime(
+                getattr(profile, "trakt_history_refreshed_at", None)
             ),
             trakt_history_snapshot=getattr(
                 profile, "trakt_history_snapshot", None
@@ -968,7 +969,7 @@ class CatalogService:
         if not state.trakt_access_token:
             return state
 
-        refreshed_at = state.trakt_history_refreshed_at
+        refreshed_at = ensure_utc_datetime(state.trakt_history_refreshed_at)
         if refreshed_at and datetime.now(timezone.utc) - refreshed_at < timedelta(hours=12):
             return state
 

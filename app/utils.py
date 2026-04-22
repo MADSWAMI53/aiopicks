@@ -6,6 +6,7 @@ import functools
 import json
 import re
 import unicodedata
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -99,3 +100,13 @@ def ensure_unique_meta_id(base_id: str, fallback: str, index: int) -> str:
         return base_id
     slug = slugify(fallback)
     return f"{slug}-{index}"
+
+
+def ensure_utc_datetime(value: datetime | None) -> datetime | None:
+    """Return a timezone-aware UTC datetime (treat naive values as UTC)."""
+
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)

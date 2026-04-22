@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
-from .utils import ensure_unique_meta_id, slugify
+from .utils import ensure_unique_meta_id, ensure_utc_datetime, slugify
 
 ContentType = Literal["movie", "series"]
 
@@ -143,6 +143,11 @@ class Catalog(BaseModel):
     seed: str | None = None
     items: list[CatalogItem] = Field(default_factory=list)
     generated_at: datetime
+
+    @field_validator("generated_at", mode="after")
+    @classmethod
+    def _ensure_generated_at_utc(cls, value: datetime) -> datetime:
+        return ensure_utc_datetime(value) or value
 
     @classmethod
     def from_ai_payload(
