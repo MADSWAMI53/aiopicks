@@ -332,9 +332,18 @@ def register_routes(fastapi_app: FastAPI) -> None:
         should_refresh = force_flag or context.force_refresh or status.needs_refresh
         if should_refresh:
             if wait_for_completion:
-                await service.ensure_catalogs(state, force=True, wait=True)
+                await service.ensure_catalogs(
+                    state,
+                    force=True,
+                    wait=True,
+                    force_trakt_history_refresh=force_flag,
+                )
             else:
-                service.request_refresh(state, force=True)
+                service.request_refresh(
+                    state,
+                    force=True,
+                    force_trakt_history_refresh=force_flag,
+                )
             status = await service.get_profile_status(state.id)
             if status is None:
                 raise HTTPException(status_code=404, detail="Profile not found after refresh")
@@ -360,6 +369,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.catalog_item_count,
                     cfg.refresh_interval,
                     cfg.response_cache,
+                    cfg.trakt_history_limit,
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
                     cfg.metadata_addon_url,
@@ -389,7 +399,11 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 and state.trakt_client_id != config.trakt_client_id
             ):
                 return True
-            # trakt_history_limit is ignored; full history is always used
+            if (
+                config.trakt_history_limit is not None
+                and state.trakt_history_limit != config.trakt_history_limit
+            ):
+                return True
             if (
                 config.openrouter_key is not None
                 and state.openrouter_api_key != config.openrouter_key

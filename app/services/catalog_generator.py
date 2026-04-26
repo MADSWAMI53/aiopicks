@@ -11,7 +11,7 @@ from contextlib import suppress
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, Sequence, cast
 
 from pydantic import (
     AliasChoices,
@@ -25,7 +25,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from ..config import Settings, DEFAULT_CATALOG_KEYS
-from ..db_models import CatalogRecord, Profile
+from ..db_models import CatalogRecord, Profile, TraktHistoryCache
 from ..models import Catalog, CatalogBundle, CatalogItem
 from ..stable_catalogs import STABLE_CATALOGS, StableCatalogDefinition
 from ..utils import ensure_utc_datetime, slugify
@@ -368,7 +368,11 @@ class CatalogService:
         await self._ensure_default_profile()
         default_state = await self._load_profile_state("default")
         if default_state:
-            await self.ensure_catalogs(default_state, force=True)
+            await self.ensure_catalogs(
+                default_state,
+                force=True,
+                force_trakt_history_refresh=False,
+            )
         if self._refresh_task is None:
             self._refresh_task = asyncio.create_task(self._refresh_loop())
 
@@ -439,10 +443,16 @@ class CatalogService:
             context.state,
             force=context.force_refresh,
             wait=wait_for_refresh,
+            force_trakt_history_refresh=False,
         )
 
     async def ensure_catalogs(
-        self, state: ProfileState, *, force: bool = False, wait: bool = True
+        self,
+        state: ProfileState,
+        *,
+        force: bool = False,
+        wait: bool = True,
+        force_trakt_history_refresh: bool = False,
     ) -> ProfileState:
         """Refresh catalogs for the profile if the cache is stale."""
 
@@ -456,12 +466,19 @@ class CatalogService:
                 await self._ensure_catalog_scope(latest_state)
                 return latest_state
             if wait or not has_catalogs:
-                await self._refresh_catalogs(latest_state)
+                await self._refresh_catalogs(
+                    latest_state,
+                    force_trakt_history_refresh=force_trakt_history_refresh,
+                )
                 refreshed_state = await self._load_profile_state(state.id)
                 final_state = refreshed_state or latest_state
                 await self._ensure_catalog_scope(final_state)
                 return final_state
-            self._schedule_refresh(latest_state, force=True)
+            self._schedule_refresh(
+                latest_state,
+                force=True,
+                force_trakt_history_refresh=force_trakt_history_refresh,
+            )
             return latest_state
 
     async def _refresh_loop(self) -> None:
@@ -486,7 +503,12 @@ class CatalogService:
             state = await self._load_profile_state(profile_id)
             if state is None:
                 continue
-            await self.ensure_catalogs(state, force=True, wait=False)
+            await self.ensure_catalogs(
+                state,
+                force=True,
+                wait=False,
+                force_trakt_history_refresh=False,
+            )
 
     async def _needs_refresh(self, state: ProfileState) -> tuple[bool, bool]:
         has_catalogs = await self._has_catalogs(state.id)
@@ -510,14 +532,25 @@ class CatalogService:
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
 
-    def _schedule_refresh(self, state: ProfileState, *, force: bool = False) -> None:
+    def _schedule_refresh(
+        self,
+        state: ProfileState,
+        *,
+        force: bool = False,
+        force_trakt_history_refresh: bool = False,
+    ) -> None:
         existing = self._refresh_jobs.get(state.id)
         if existing and not existing.done():
             return
 
         async def _runner() -> None:
             try:
-                await self.ensure_catalogs(state, force=force, wait=True)
+                await self.ensure_catalogs(
+                    state,
+                    force=force,
+                    wait=True,
+                    force_trakt_history_refresh=force_trakt_history_refresh,
+                )
             except Exception as exc:  # pragma: no cover - background safety net
                 logger.exception(
                     "Background refresh for profile %s failed: %s", state.id, exc
@@ -527,31 +560,235 @@ class CatalogService:
 
         self._refresh_jobs[state.id] = asyncio.create_task(_runner())
 
-    def request_refresh(self, state: ProfileState, *, force: bool = False) -> None:
+    def request_refresh(
+        self,
+        state: ProfileState,
+        *,
+        force: bool = False,
+        force_trakt_history_refresh: bool = False,
+    ) -> None:
         """Expose background refresh scheduling to API consumers."""
 
-        self._schedule_refresh(state, force=force)
+        self._schedule_refresh(
+            state,
+            force=force,
+            force_trakt_history_refresh=force_trakt_history_refresh,
+        )
 
-    async def _refresh_catalogs(self, state: ProfileState) -> None:
+    def _compact_trakt_history_items(
+        self,
+        items: Sequence[object],
+        *,
+        key: str,
+    ) -> list[dict[str, Any]]:
+        """Shrink Trakt history entries to the fields used by generators."""
+
+        compacted: list[dict[str, Any]] = []
+        for raw in items:
+            if not isinstance(raw, Mapping):
+                continue
+            watched_at = raw.get("watched_at")
+            media = raw.get(key)
+            if not isinstance(media, Mapping):
+                continue
+            title = media.get("title")
+            if not isinstance(title, str) or not title.strip():
+                continue
+            year = media.get("year") if isinstance(media.get("year"), int) else None
+            ids = media.get("ids") if isinstance(media.get("ids"), Mapping) else {}
+            images = media.get("images") if isinstance(media.get("images"), Mapping) else {}
+
+            country_value = media.get("country")
+            countries: list[str] = []
+            if isinstance(country_value, str) and country_value.strip():
+                countries.append(country_value.strip())
+            elif isinstance(country_value, Sequence) and not isinstance(country_value, (str, bytes)):
+                countries = [c for c in country_value if isinstance(c, str) and c.strip()]
+
+            compacted.append(
+                {
+                    "watched_at": watched_at if isinstance(watched_at, str) else None,
+                    key: {
+                        "title": title.strip(),
+                        "year": year,
+                        "ids": dict(ids),
+                        "genres": [
+                            g
+                            for g in (media.get("genres") or [])
+                            if isinstance(g, str) and g.strip()
+                        ],
+                        "country": countries,
+                        "language": (
+                            media.get("language").strip()
+                            if isinstance(media.get("language"), str)
+                            and media.get("language").strip()
+                            else None
+                        ),
+                        "runtime": (
+                            media.get("runtime") if isinstance(media.get("runtime"), int) else None
+                        ),
+                        "images": dict(images),
+                        "overview": (
+                            media.get("overview")
+                            if isinstance(media.get("overview"), str)
+                            and media.get("overview").strip()
+                            else None
+                        ),
+                    },
+                }
+            )
+
+        return compacted
+
+    def _effective_trakt_history_limit(self, state: ProfileState) -> int:
+        value = getattr(state, "trakt_history_limit", 0)
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            limit = int(getattr(self._settings, "trakt_history_limit", 0))
+        if limit < 0:
+            limit = 0
+        if limit > 10_000:
+            limit = 10_000
+        return limit
+
+    async def _load_trakt_history_cache(
+        self,
+        profile_id: str,
+        *,
+        content_type: str,
+        history_limit: int,
+    ) -> HistoryBatch | None:
+        now = datetime.now(timezone.utc)
+        async with self._session_factory() as session:
+            stmt = (
+                select(TraktHistoryCache)
+                .where(
+                    TraktHistoryCache.profile_id == profile_id,
+                    TraktHistoryCache.content_type == content_type,
+                    TraktHistoryCache.history_limit == history_limit,
+                )
+                .limit(1)
+            )
+            result = await session.execute(stmt)
+            record = result.scalar_one_or_none()
+            if record is None:
+                return None
+            expires_at = ensure_utc_datetime(getattr(record, "expires_at", None))
+            if expires_at is None or expires_at <= now:
+                return None
+            payload = getattr(record, "payload", None)
+            if not isinstance(payload, list):
+                return None
+            total = getattr(record, "total", 0)
+            fetched_flag = bool(getattr(record, "fetched", 1))
+            return HistoryBatch(
+                items=cast(list[dict[str, Any]], payload),
+                total=int(total) if isinstance(total, int) else len(payload),
+                fetched=fetched_flag,
+            )
+
+    async def _store_trakt_history_cache(
+        self,
+        profile_id: str,
+        *,
+        content_type: str,
+        history_limit: int,
+        batch: HistoryBatch,
+        ttl_seconds: int,
+    ) -> None:
+        if ttl_seconds <= 0:
+            return
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        async with self._session_factory() as session:
+            await session.execute(
+                delete(TraktHistoryCache).where(
+                    TraktHistoryCache.profile_id == profile_id,
+                    TraktHistoryCache.content_type == content_type,
+                    TraktHistoryCache.history_limit == history_limit,
+                )
+            )
+            session.add(
+                TraktHistoryCache(
+                    profile_id=profile_id,
+                    content_type=content_type,
+                    history_limit=history_limit,
+                    total=batch.total or len(batch.items),
+                    fetched=1 if batch.fetched else 0,
+                    payload=batch.items,
+                    fetched_at=now,
+                    expires_at=expires_at,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            await session.commit()
+
+    async def _fetch_trakt_history_for_refresh(
+        self,
+        state: ProfileState,
+        *,
+        content_type: str,
+        key: str,
+        force_refresh: bool,
+    ) -> HistoryBatch:
+        history_limit = self._effective_trakt_history_limit(state)
+        ttl_seconds = int(getattr(self._settings, "trakt_history_cache_ttl_seconds", 0) or 0)
+
+        if ttl_seconds > 0 and not force_refresh:
+            cached = await self._load_trakt_history_cache(
+                state.id,
+                content_type=content_type,
+                history_limit=history_limit,
+            )
+            if cached is not None:
+                return cached
+
+        batch = await self._trakt.fetch_history(
+            content_type,
+            client_id=state.trakt_client_id,
+            access_token=state.trakt_access_token,
+            limit=history_limit,
+        )
+        compact_items = self._compact_trakt_history_items(batch.items, key=key)
+        compact_batch = HistoryBatch(
+            items=compact_items,
+            total=batch.total or len(compact_items),
+            fetched=batch.fetched,
+        )
+        if ttl_seconds > 0:
+            await self._store_trakt_history_cache(
+                state.id,
+                content_type=content_type,
+                history_limit=history_limit,
+                batch=compact_batch,
+                ttl_seconds=ttl_seconds,
+            )
+        return compact_batch
+
+    async def _refresh_catalogs(
+        self,
+        state: ProfileState,
+        *,
+        force_trakt_history_refresh: bool = False,
+    ) -> None:
         logger.info(
             "Refreshing catalogs for profile %s via model %s",
             state.id,
             state.openrouter_model,
         )
 
-        # Always fetch the full Trakt history for generation (no user-configurable limit)
         movie_history_batch, show_history_batch = await asyncio.gather(
-            self._trakt.fetch_history(
+            self._fetch_trakt_history_for_refresh(
                 "movies",
-                client_id=state.trakt_client_id,
-                access_token=state.trakt_access_token,
-                limit=None,
+                key="movie",
+                force_refresh=force_trakt_history_refresh,
             ),
-            self._trakt.fetch_history(
+            self._fetch_trakt_history_for_refresh(
                 "shows",
-                client_id=state.trakt_client_id,
-                access_token=state.trakt_access_token,
-                limit=None,
+                key="show",
+                force_refresh=force_trakt_history_refresh,
             ),
         )
         movie_history = movie_history_batch.items
@@ -563,10 +800,10 @@ class CatalogService:
             show_batch=show_history_batch,
         )
 
-        # Persist stats while reflecting that a full-history scan was used (limit=0)
+        # Persist stats while reflecting the configured sampling limit.
         await self._store_trakt_history_stats(
             state,
-            history_limit=0,
+            history_limit=self._effective_trakt_history_limit(state),
             movie_total=movie_total,
             show_total=show_total,
             snapshot=snapshot,
@@ -1283,8 +1520,11 @@ class CatalogService:
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
                     trakt_access_token=config.trakt_access_token or self._settings.trakt_access_token,
-                    # Always default to full history; do not accept client-provided limits
-                    trakt_history_limit=self._settings.trakt_history_limit,
+                    trakt_history_limit=(
+                        config.trakt_history_limit
+                        if config.trakt_history_limit is not None
+                        else self._settings.trakt_history_limit
+                    ),
                     metadata_addon_url=metadata_addon,
                     next_refresh_at=now,
                     last_refreshed_at=None,
@@ -1357,7 +1597,12 @@ class CatalogService:
                 if config.trakt_access_token is not None and config.trakt_access_token != profile.trakt_access_token:
                     profile.trakt_access_token = config.trakt_access_token
                     refresh_required = True
-                # Ignore any client-provided Trakt history limit; always use full history
+                if (
+                    config.trakt_history_limit is not None
+                    and config.trakt_history_limit != getattr(profile, "trakt_history_limit", 0)
+                ):
+                    profile.trakt_history_limit = config.trakt_history_limit
+                    refresh_required = True
                 if config.metadata_addon_url is not None:
                     new_metadata_url = str(config.metadata_addon_url)
                     if new_metadata_url != getattr(profile, "metadata_addon_url", None):

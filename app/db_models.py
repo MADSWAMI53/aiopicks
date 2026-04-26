@@ -90,3 +90,35 @@ class CatalogRecord(Base):
     )
 
     profile: Mapped[Profile] = relationship(back_populates="catalogs")
+
+
+class TraktHistoryCache(Base):
+    """Compacted Trakt history cached per profile/type for faster refreshes."""
+
+    __tablename__ = "trakt_history_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_id",
+            "content_type",
+            "history_limit",
+            name="uq_trakt_history_cache_profile_type_limit",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    profile_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("profiles.id", ondelete="CASCADE")
+    )
+    # Trakt API segment: "movies" or "shows"
+    content_type: Mapped[str] = mapped_column(String(16))
+    # The limit used when fetching; 0 means "no limit"
+    history_limit: Mapped[int] = mapped_column(Integer, default=0)
+    total: Mapped[int] = mapped_column(Integer, default=0)
+    fetched: Mapped[int] = mapped_column(Integer, default=1)  # 0/1 for SQLite portability
+    payload: Mapped[object] = mapped_column(JSON)
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )

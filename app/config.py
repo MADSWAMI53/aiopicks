@@ -38,6 +38,15 @@ class Settings(BaseSettings):
     trakt_history_limit: int = Field(
         default=0, alias="TRAKT_HISTORY_LIMIT", ge=0, le=10_000
     )
+    trakt_history_cache_ttl_seconds: int = Field(
+        default=0,
+        alias="TRAKT_HISTORY_CACHE_TTL_SECONDS",
+        ge=0,
+        description=(
+            "Cache compacted Trakt history per profile/type for this many seconds. "
+            "0 disables caching."
+        ),
+    )
 
     openrouter_api_key: str | None = Field(
         default=None, alias="OPENROUTER_API_KEY"
