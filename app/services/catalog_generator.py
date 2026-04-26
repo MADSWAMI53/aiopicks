@@ -781,12 +781,14 @@ class CatalogService:
 
         movie_history_batch, show_history_batch = await asyncio.gather(
             self._fetch_trakt_history_for_refresh(
-                "movies",
+                state,
+                content_type="movies",
                 key="movie",
                 force_refresh=force_trakt_history_refresh,
             ),
             self._fetch_trakt_history_for_refresh(
-                "shows",
+                state,
+                content_type="shows",
                 key="show",
                 force_refresh=force_trakt_history_refresh,
             ),
