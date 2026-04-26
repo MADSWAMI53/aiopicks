@@ -415,6 +415,18 @@ CONFIG_TEMPLATE = dedent(
                     <label for="config-openai-key">OpenAI API key <span class="helper">Required – stored on server per profile.</span></label>
                     <input id="config-openai-key" type="text" placeholder="sk-..." autocomplete="off" spellcheck="false" />
                 </div>
+                <div class="field">
+                    <label for="config-ollama-url">Ollama URL <span class="helper">Required – e.g. http://localhost:11434</span></label>
+                    <input id="config-ollama-url" type="text" placeholder="http://localhost:11434" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="field">
+                    <label for="config-ollama-model">Ollama model <span class="helper">Required – the name of the model you have served in Ollama</span></label>
+                    <input id="config-ollama-model" type="text" placeholder="e.g. my-ollama-model" autocomplete="off" spellcheck="false" />
+                </div>
+                <div class="field">
+                    <label for="config-ollama-key">Ollama API key <span class="helper">Optional – if your Ollama instance requires authentication</span></label>
+                    <input id="config-ollama-key" type="text" placeholder="Ollama API key (if required)" autocomplete="off" spellcheck="false" />
+                </div>
                 <div class="field" id="openai-model-field" style="display:none;">
                     <label for="config-openai-model">OpenAI model <span class="helper">Default: gpt-5-mini-2025-08-07</span></label>
                     <input id="config-openai-model" type="text" placeholder="gpt-5-mini-2025-08-07" />
@@ -490,6 +502,12 @@ CONFIG_TEMPLATE = dedent(
             const openaiModel = document.getElementById('config-openai-model');
             const openaiKeyField = document.getElementById('openai-key-field');
             const openaiModelField = document.getElementById('openai-model-field');
+            const ollamaUrl = document.getElementById('config-ollama-url');
+            const ollamaModel = document.getElementById('config-ollama-model');
+            const ollamaKey = document.getElementById('config-ollama-key');
+            const ollamaUrlField = ollamaUrl && ollamaUrl.closest('.field');
+            const ollamaModelField = ollamaModel && ollamaModel.closest('.field');
+            const ollamaKeyField = ollamaKey && ollamaKey.closest('.field');
             const metadataAddonInput = document.getElementById('config-metadata-addon');
             const catalogLaneContainer = document.getElementById('catalog-lane-list');
             const catalogLaneWarning = document.getElementById('catalog-lane-warning');
@@ -857,12 +875,16 @@ CONFIG_TEMPLATE = dedent(
                 const mode = (engineSelect.value || 'openrouter');
                 const showOpenRouter = mode === 'openrouter';
                 const showOpenAI = mode === 'openai';
+                const showOllama = mode === 'ollama';
                 const keyField = openrouterKey && openrouterKey.closest('.field');
                 const modelField = openrouterModel && openrouterModel.closest('.field');
                 if (keyField) keyField.style.display = showOpenRouter ? '' : 'none';
                 if (modelField) modelField.style.display = showOpenRouter ? '' : 'none';
                 if (openaiKeyField) openaiKeyField.style.display = showOpenAI ? '' : 'none';
                 if (openaiModelField) openaiModelField.style.display = showOpenAI ? '' : 'none';
+                if (ollamaUrlField) ollamaUrlField.style.display = showOllama ? '' : 'none';
+                if (ollamaModelField) ollamaModelField.style.display = showOllama ? '' : 'none';
+                if (ollamaKeyField) ollamaKeyField.style.display = showOllama ? '' : 'none';
             }
             updateAiFieldVisibility();
             refreshSelect.addEventListener('change', () => {
@@ -1145,6 +1167,7 @@ CONFIG_TEMPLATE = dedent(
             function updateEngineUi() {
                 const usingOpenRouter = engineSelect.value === 'openrouter';
                 const usingOpenAI = engineSelect.value === 'openai';
+                const usingOllama = engineSelect.value === 'ollama';
                 const keyField = openrouterKey && openrouterKey.closest('.field');
                 const modelField = openrouterModel && openrouterModel.closest('.field');
                 if (keyField) {
@@ -1158,6 +1181,15 @@ CONFIG_TEMPLATE = dedent(
                 }
                 if (openaiModelField) {
                     openaiModelField.classList.toggle('hidden', !usingOpenAI);
+                }
+                if (ollamaUrlField) {
+                    ollamaUrlField.classList.toggle('hidden', !usingOllama);
+                }
+                if (ollamaModelField) {
+                    ollamaModelField.classList.toggle('hidden', !usingOllama);
+                }
+                if (ollamaKeyField) {
+                    ollamaKeyField.classList.toggle('hidden', !usingOllama);
                 }
             }
 
