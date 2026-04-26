@@ -400,6 +400,7 @@ CONFIG_TEMPLATE = dedent(
                         <option value="openrouter">AI via OpenRouter</option>
                         <option value="openai">AI via OpenAI</option>
                         <option value="local">Local (offline, history-based)</option>
+                        <option value="ollama">AI via Ollama (self-hosted)</option>
                     </select>
                 </div>
                 <div class="field">
