@@ -582,10 +582,46 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 status_code=response.status_code,
             )
 
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+        expires_in = _coerce_int(data.get("expires_in"))
+
+        # Fetch user info and save tokens to database
+        try:
+            service = get_catalog_service(fastapi_app)
+            trakt_client = TraktClient(settings, fastapi_app.state.trakt_oauth_states)  # Get HTTP client from state
+            # Create a temporary Trakt client with the new access token to fetch user info
+            async with httpx.AsyncClient(
+                base_url=str(settings.trakt_api_url),
+                timeout=httpx.Timeout(10.0, connect=5.0),
+            ) as temp_http_client:
+                temp_trakt_client = TraktClient(settings, temp_http_client)
+                user_info = await temp_trakt_client.fetch_user(
+                    client_id=settings.trakt_client_id,
+                    access_token=access_token,
+                )
+                
+                if user_info:
+                    username = user_info.get("ids", {}).get("slug") or user_info.get("username")
+                    if username:
+                        profile_id = f"trakt-{username}"
+                        # Save tokens to database
+                        await service.save_trakt_tokens(
+                            profile_id=profile_id,
+                            access_token=access_token,
+                            refresh_token=refresh_token,
+                            expires_in=expires_in,
+                        )
+                        logger.info(f"Saved Trakt tokens for profile: {profile_id}")
+        except Exception as e:
+            logger.warning(f"Failed to save Trakt tokens: {e}")
+            # Don't fail the OAuth flow if token saving fails
+            # The tokens are still returned to the frontend
+
         token_payload = {
-            "access_token": data.get("access_token"),
-            "refresh_token": data.get("refresh_token"),
-            "expires_in": _coerce_int(data.get("expires_in")),
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
             "scope": data.get("scope"),
             "token_type": data.get("token_type"),
             "created_at": _coerce_int(data.get("created_at")),

@@ -446,6 +446,65 @@ class CatalogService:
             force_trakt_history_refresh=False,
         )
 
+    async def save_trakt_tokens(
+        self,
+        profile_id: str,
+        access_token: str,
+        refresh_token: str | None = None,
+        expires_in: int | None = None,
+    ) -> Profile:
+        """Save Trakt OAuth tokens to a profile record.
+        
+        Args:
+            profile_id: The profile ID to save tokens for
+            access_token: The OAuth access token from Trakt
+            refresh_token: Optional refresh token
+            expires_in: Seconds until token expiration
+        
+        Returns:
+            The updated Profile record
+        """
+        async with self._session_factory() as session:
+            now = datetime.now(timezone.utc)
+            profile = await session.get(Profile, profile_id)
+            
+            if profile is None:
+                # Create a new profile with just the Trakt tokens
+                profile = Profile(
+                    id=profile_id,
+                    trakt_client_id=self._settings.trakt_client_id,
+                    trakt_access_token=access_token,
+                    openrouter_api_key="",
+                    openrouter_model=self._settings.openrouter_model,
+                    openai_api_key="",
+                    openai_model=self._settings.openai_model,
+                    generator_mode="local",  # Default mode
+                    catalog_keys=list(self._default_catalog_keys),
+                    catalog_count=len(self._default_catalog_keys),
+                    catalog_item_count=self._settings.catalog_item_count,
+                    generation_retry_limit=self._settings.generation_retry_limit,
+                    refresh_interval_seconds=self._settings.refresh_interval_seconds,
+                    response_cache_seconds=self._settings.response_cache_seconds,
+                    next_refresh_at=now,
+                    last_refreshed_at=None,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(profile)
+            else:
+                # Update existing profile with new tokens
+                profile.trakt_access_token = access_token
+                if refresh_token:
+                    # Store refresh token in a field (using trakt_client_id field or consider adding a new field)
+                    # For now, we'll just update the access token
+                    pass
+                profile.updated_at = now
+            
+            await session.commit()
+            # Refresh from database to ensure we have all fields
+            await session.refresh(profile)
+            return profile
+
     async def ensure_catalogs(
         self,
         state: ProfileState,

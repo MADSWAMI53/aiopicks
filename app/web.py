@@ -1764,6 +1764,16 @@ CONFIG_TEMPLATE = dedent(
                     return;
                 }
                 if (traktAuth.accessToken) {
+                    const history = profileStatus && profileStatus.traktHistory;
+                    const historySynced = history && history.refreshedAt;
+                    if (profileStatus && !profileStatus.refreshing && !historySynced) {
+                        showTraktStatus(
+                            'Trakt access token is present but history sync did not complete. The token may be expired or invalid.',
+                            'error'
+                        );
+                        showTraktHint('Reconnect to Trakt to refresh your access token and restore personalized catalog generation.');
+                        return;
+                    }
                     showTraktStatus('Trakt connected! Manifest links now include your access token automatically.', 'success');
                     if (traktAuth.refreshToken) {
                         showTraktHint('Your tokens are stored locally in this browser so you stay signed in next time.');

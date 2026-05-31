@@ -126,6 +126,12 @@ class TraktClient:
                     return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
 
                 # HTTP response received
+                if response.status_code == 401:
+                    logger.warning(
+                        "Trakt returned 401 Unauthorized for %s history; access token may be invalid or expired.",
+                        content_type,
+                    )
+                    return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
                 if 500 <= response.status_code < 600:
                     attempt += 1
                     if attempt <= self._max_retries:
@@ -225,6 +231,11 @@ class TraktClient:
                     await asyncio.sleep(backoff)
                     continue
                 logger.warning("Failed to fetch Trakt stats: %s", exc)
+                return {}
+            if response.status_code == 401:
+                logger.warning(
+                    "Trakt returned 401 Unauthorized for stats fetch; access token may be invalid or expired."
+                )
                 return {}
             if 500 <= response.status_code < 600:
                 attempt += 1
