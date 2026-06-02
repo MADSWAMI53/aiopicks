@@ -6,6 +6,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+RUN mkdir -p /data
+
 COPY pyproject.toml README.md ./
 COPY app ./app
 COPY .env.sample ./
