@@ -84,7 +84,7 @@ AIOPicks currently generates 20 fixed lanes. Movies and series are requested sep
    - `GENERATION_RETRY_LIMIT` (extra AI attempts if a lane comes back short, default `3`; AI mode only)
    - `CATALOG_KEYS` (comma-separated lane keys if you want to trim the manifest or change the order)
    - `METADATA_ADDON_URL` (Cinemeta or another metadata service; omit `/manifest.json`)
-   - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db`)
+   - `DATABASE_URL` (SQLAlchemy URL; defaults to `sqlite+aiosqlite:///./aiopicks.db` locally; container deployments should use the `/data` volume, e.g. `sqlite+aiosqlite:///data/aiopicks.db`)
    - `GENERATOR_MODE` (choose `openrouter` or `local`; defaults to `local`. You can still switch per-profile in the UI.)
 
 ### Manifest overrides and multi-profile use
