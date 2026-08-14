@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import parse_qs
 
 import httpx
 import pytest
 
 from app.config import Settings
+from app.main import _post_simkl_oauth
 from app.services.simkl import SimklClient
 
 
@@ -90,3 +92,36 @@ async def test_fetch_history_handles_error_response() -> None:
     assert batch.fetched is False
     assert batch.items == []
     assert batch.total == 0
+
+
+@pytest.mark.anyio("asyncio")
+async def test_post_simkl_oauth_uses_form_encoded_payload() -> None:
+    """Simkl token exchange should send OAuth data as form fields, not JSON."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = parse_qs(request.content.decode("utf-8"))
+        assert request.headers.get("Content-Type", "").startswith(
+            "application/x-www-form-urlencoded"
+        )
+        assert body["code"] == ["auth-code"]
+        assert body["client_id"] == ["simkl-client-id"]
+        assert body["client_secret"] == ["simkl-client-secret"]
+        assert body["grant_type"] == ["authorization_code"]
+        return httpx.Response(200, json={"access_token": "simkl-token"})
+
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="https://api.example.com") as client:
+        response = await _post_simkl_oauth(
+            "https://api.example.com/oauth/token",
+            {
+                "code": "auth-code",
+                "client_id": "simkl-client-id",
+                "client_secret": "simkl-client-secret",
+                "redirect_uri": "http://localhost:3000/api/simkl/callback",
+                "grant_type": "authorization_code",
+            },
+            client=client,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["access_token"] == "simkl-token"

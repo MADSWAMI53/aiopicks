@@ -539,6 +539,7 @@ CONFIG_TEMPLATE = dedent(
             const traktStatsShows = document.getElementById('trakt-stats-shows');
             const traktStatsSummary = document.getElementById('trakt-stats-summary');
             const traktStatsUpdated = document.getElementById('trakt-stats-updated');
+            const simklLoginAvailable = Boolean(defaults.simklLoginAvailable);
             const traktLoginAvailable = Boolean(defaults.traktLoginAvailable);
             const traktCallbackOrigin = (defaults.traktCallbackOrigin || '').trim();
             const traktOrigins = [window.location.origin];
@@ -921,7 +922,7 @@ CONFIG_TEMPLATE = dedent(
             });
 
             traktLoginButton.addEventListener('click', async () => {
-                if (!traktLoginAvailable || traktPending) {
+                if (!simklLoginAvailable || traktPending) {
                     return;
                 }
                 traktPending = true;
@@ -1659,9 +1660,10 @@ CONFIG_TEMPLATE = dedent(
 
             function updateTraktUi() {
                 const connected = Boolean(traktAuth.accessToken);
-                traktLoginButton.classList.toggle('hidden', !traktLoginAvailable || connected);
+                const canLogin = simklLoginAvailable;
+                traktLoginButton.classList.toggle('hidden', !canLogin || connected);
                 traktDisconnectButton.classList.toggle('hidden', !connected);
-                traktLoginButton.disabled = !traktLoginAvailable || traktPending;
+                traktLoginButton.disabled = !canLogin || traktPending;
                 traktDisconnectButton.disabled = traktPending || !connected;
                 updateTraktStats();
             }
@@ -1751,9 +1753,9 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function refreshTraktMessaging() {
-                if (!traktLoginAvailable) {
+                if (!simklLoginAvailable) {
                     showTraktStatus(
-                        'Server is not configured with Trakt credentials. Ask the administrator to set TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET.',
+                        'Server is not configured with Simkl credentials. Ask the administrator to set SIMKL_CLIENT_ID and SIMKL_CLIENT_SECRET.',
                         'error'
                     );
                     showTraktHint('');

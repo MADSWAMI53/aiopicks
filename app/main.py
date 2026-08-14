@@ -986,6 +986,25 @@ def _coerce_int(value: Any, *, default: int | None = None) -> int | None:
         return default
 
 
+async def _post_simkl_oauth(
+    url: str,
+    payload: dict[str, Any],
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> httpx.Response:
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+    if client is not None:
+        return await client.post(url, data=payload, headers=headers)
+
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(20.0, connect=10.0),
+    ) as async_client:
+        return await async_client.post(url, data=payload, headers=headers)
+
+
 async def _post_trakt_oauth(path: str, payload: dict[str, Any]) -> httpx.Response:
     headers = {
         "trakt-api-version": "2",
