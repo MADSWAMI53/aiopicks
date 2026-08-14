@@ -122,9 +122,6 @@ class CatalogItem(BaseModel):
         if self.imdb_id:
             meta["imdbId"] = self.imdb_id
             meta["imdb_id"] = self.imdb_id
-            meta["behaviorHints"] = {"defaultVideoId": self.imdb_id}
-        elif self.tmdb_id:
-            meta["behaviorHints"] = {"defaultVideoId": f"tmdb:{self.tmdb_id}"}
         if self.trakt_id:
             meta["traktId"] = self.trakt_id
         if self.tmdb_id:
@@ -212,15 +209,17 @@ class Catalog(BaseModel):
         genre: str | None = None,
     ) -> dict[str, object]:
         """Return the Stremio catalog payload."""
- 
+
         items = self.items
         if genre:
             genre_lower = genre.lower()
             items = [i for i in items if any(g.lower() == genre_lower for g in i.genres)]
-        metas = [
-            item.to_catalog_stub(self.id, index)
-            for index, item in enumerate(items)
-        ]
+        metas: list[dict[str, object]] = []
+        for index, item in enumerate(items):
+            meta = item.to_catalog_stub(self.id, index)
+            if not meta.get("genres"):
+                meta.pop("genres", None)
+            metas.append(meta)
         return {
             "metas": metas,
             "catalogName": self.title,

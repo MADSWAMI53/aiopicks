@@ -367,8 +367,8 @@ CONFIG_TEMPLATE = dedent(
         </header>
         <div class="grid">
             <section class="card" id="trakt-card">
-                <h2>Connect Simkl</h2>
-                <p class="description">Sign in seamlessly—no device codes or copy/paste hoops required.</p>
+                <h2>Connect Trakt</h2>
+                <p class="description">Sign in to Trakt to unlock personalisation and history-based catalog filtering.</p>
                 <p class="muted" id="trakt-hint"></p>
                 <div class="actions">
                     <button id="trakt-login" type="button">Sign in with Trakt</button>
@@ -389,6 +389,16 @@ CONFIG_TEMPLATE = dedent(
                     <p class="stats-summary" id="trakt-stats-summary"></p>
                     <p class="stats-updated" id="trakt-stats-updated"></p>
                 </div>
+            </section>
+            <section class="card" id="simkl-card">
+                <h2>Connect Simkl</h2>
+                <p class="description">Sign in to Simkl to sync your watch history and keep the app aligned with your library.</p>
+                <p class="muted" id="simkl-hint"></p>
+                <div class="actions">
+                    <button id="simkl-login" type="button">Sign in with Simkl</button>
+                    <button id="simkl-disconnect" type="button" class="secondary hidden">Disconnect</button>
+                </div>
+                <div class="status" id="simkl-status"></div>
             </section>
             <section class="card" id="manifest-card">
                 <h2>Manifest builder</h2>
@@ -539,6 +549,10 @@ CONFIG_TEMPLATE = dedent(
             const traktStatsShows = document.getElementById('trakt-stats-shows');
             const traktStatsSummary = document.getElementById('trakt-stats-summary');
             const traktStatsUpdated = document.getElementById('trakt-stats-updated');
+            const simklLoginButton = document.getElementById('simkl-login');
+            const simklDisconnectButton = document.getElementById('simkl-disconnect');
+            const simklStatus = document.getElementById('simkl-status');
+            const simklHint = document.getElementById('simkl-hint');
             const simklLoginAvailable = Boolean(defaults.simklLoginAvailable);
             const traktLoginAvailable = Boolean(defaults.traktLoginAvailable);
             const traktCallbackOrigin = (defaults.traktCallbackOrigin || '').trim();
@@ -548,7 +562,9 @@ CONFIG_TEMPLATE = dedent(
             }
 
             const traktAuth = { accessToken: '', refreshToken: '' };
+            const simklAuth = { accessToken: '', refreshToken: '' };
             let traktPending = false;
+            let simklPending = false;
             let copyTimeout = null;
             let historyLimitTouched = false;
             let generationRetriesTouched = false;
@@ -966,11 +982,60 @@ CONFIG_TEMPLATE = dedent(
                 persistTraktTokens(null);
                 updateManifestPreview();
                 updateTraktUi();
-                showTraktStatus('Simkl disconnected. Sign in again to reconnect.');
+                showTraktStatus('Trakt disconnected. Sign in again to reconnect.');
                 showTraktHint('');
             });
 
-            let traktBroadcastChannel = null;
+            simklLoginButton.addEventListener('click', async () => {
+                if (!simklLoginAvailable || simklPending) {
+                    return;
+                }
+                simklPending = true;
+                updateSimklUi();
+                showSimklStatus('Opening Simkl sign in…');
+                showSimklHint('A secure pop-up will appear. Approve access in Simkl and this page will update automatically.');
+                try {
+                    const response = await fetch('/api/simkl/login-url', { method: 'POST' });
+                    const payload = await response.json().catch(() => ({}));
+                    if (!response.ok || !payload.url) {
+                        simklPending = false;
+                        updateSimklUi();
+                        showSimklStatus(resolveErrorMessage(payload) || 'Unable to start Simkl sign in.', 'error');
+                        showSimklHint('Please try again in a moment.');
+                        return;
+                    }
+                    const popup = window.open(payload.url, 'simkl-sign-in', 'width=600,height=780');
+                    if (!popup) {
+                        simklPending = false;
+                        updateSimklUi();
+                        showSimklStatus('Allow pop-ups for this site to continue with Simkl sign in.', 'error');
+                        showSimklHint('After enabling pop-ups, click “Sign in with Simkl” again.');
+                        return;
+                    }
+                    popup.focus();
+                } catch (error) {
+                    console.error(error);
+                    simklPending = false;
+                    updateSimklUi();
+                    showSimklStatus('Could not reach the server to start Simkl sign in.', 'error');
+                    showSimklHint('Check your connection and try again.');
+                }
+            });
+
+            simklDisconnectButton.addEventListener('click', () => {
+                if (simklPending) {
+                    return;
+                }
+                simklAuth.accessToken = '';
+                simklAuth.refreshToken = '';
+                persistSimklTokens(null);
+                updateManifestPreview();
+                updateSimklUi();
+                showSimklStatus('Simkl disconnected. Sign in again to reconnect.');
+                showSimklHint('');
+            });
+
+            let oauthBroadcastChannels = [];
 
             function normalizeTraktOauthPayload(rawPayload) {
                 if (rawPayload == null) {
@@ -1038,6 +1103,25 @@ CONFIG_TEMPLATE = dedent(
                 if (origin && !traktOrigins.includes(origin)) {
                     return;
                 }
+                if (data.source === 'simkl-oauth') {
+                    simklPending = false;
+                    applySimklTokens(data.tokens || {}, { silent: true });
+                    updateSimklUi();
+                    if (data.status === 'success' && simklAuth.accessToken) {
+                        refreshSimklMessaging();
+                        void fetchProfileStatus({ useConfig: true });
+                    } else if (data.status === 'success') {
+                        showSimklStatus('Simkl did not return an access token. Please try again.', 'error');
+                        showSimklHint('Approve the access request in the Simkl window to finish linking.');
+                    } else {
+                        showSimklStatus(
+                            data.error_description || data.error || 'Sign in request was rejected.',
+                            'error'
+                        );
+                        showSimklHint('Try again and ensure you approve the request in the sign-in window.');
+                    }
+                    return;
+                }
                 traktPending = false;
                 applyTraktTokens(data.tokens || {}, { silent: true });
                 updateTraktUi();
@@ -1045,8 +1129,8 @@ CONFIG_TEMPLATE = dedent(
                     refreshTraktMessaging();
                     void fetchProfileStatus({ useConfig: true });
                 } else if (data.status === 'success') {
-                    showTraktStatus('Simkl did not return an access token. Please try again.', 'error');
-                    showTraktHint('Approve the access request in the Simkl window to finish linking.');
+                    showTraktStatus('Trakt did not return an access token. Please try again.', 'error');
+                    showTraktHint('Approve the access request in the Trakt window to finish linking.');
                 } else {
                     showTraktStatus(
                         data.error_description || data.error || 'Sign in request was rejected.',
@@ -1061,16 +1145,23 @@ CONFIG_TEMPLATE = dedent(
             });
 
             if ('BroadcastChannel' in window) {
-                traktBroadcastChannel = new BroadcastChannel('aiopicks.trakt-oauth');
-                traktBroadcastChannel.addEventListener('message', (event) => {
-                    handleTraktOauthPayload(event.data, '');
+                ['aiopicks.trakt-oauth', 'aiopicks.simkl-oauth'].forEach((channelName) => {
+                    const channel = new BroadcastChannel(channelName);
+                    channel.addEventListener('message', (event) => {
+                        handleTraktOauthPayload(event.data, '');
+                    });
+                    oauthBroadcastChannels.push(channel);
                 });
             }
 
             window.addEventListener('beforeunload', () => {
-                if (traktBroadcastChannel) {
-                    traktBroadcastChannel.close();
-                }
+                oauthBroadcastChannels.forEach((channel) => {
+                    try {
+                        channel.close();
+                    } catch (error) {
+                        // Ignore cleanup errors.
+                    }
+                });
                 stopStatusPolling();
             });
 
@@ -1150,9 +1241,10 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function updateManifestUi() {
-                const traktLocked = traktLoginAvailable && !traktAuth.accessToken;
+                const hasProviderAuth = Boolean(traktAuth.accessToken || simklAuth.accessToken);
+                const providerBlocked = (traktLoginAvailable && !traktAuth.accessToken) && (simklLoginAvailable && !simklAuth.accessToken);
                 const generating = preparePending || Boolean(profileStatus && profileStatus.refreshing);
-                prepareProfileButton.disabled = traktLocked || generating;
+                prepareProfileButton.disabled = providerBlocked || generating;
                 prepareProfileButton.classList.toggle('loading', generating);
                 prepareProfileButton.setAttribute('aria-busy', generating ? 'true' : 'false');
                 if (prepareSpinner) {
@@ -1161,8 +1253,8 @@ CONFIG_TEMPLATE = dedent(
                 if (prepareLabel) {
                     prepareLabel.textContent = generating ? 'Generating…' : 'Generate catalogs';
                 }
-                copyConfiguredManifest.disabled = traktLocked || !isProfileReady();
-                manifestLock.classList.toggle('hidden', !traktLoginAvailable || Boolean(traktAuth.accessToken));
+                copyConfiguredManifest.disabled = providerBlocked || !isProfileReady();
+                manifestLock.classList.toggle('hidden', hasProviderAuth || (!traktLoginAvailable && !simklLoginAvailable));
                 updateEngineUi();
             }
 
@@ -1320,6 +1412,7 @@ CONFIG_TEMPLATE = dedent(
                     refreshInterval: refreshSelect.value,
                     cacheTtl: cacheSelect.value,
                     traktAccessToken: traktAuth.accessToken,
+                    simklAccessToken: simklAuth.accessToken,
                 };
             }
 
@@ -1357,6 +1450,7 @@ CONFIG_TEMPLATE = dedent(
                 if (settings.refreshInterval) payload.refreshInterval = Number(settings.refreshInterval);
                 if (settings.cacheTtl) payload.cacheTtl = Number(settings.cacheTtl);
                 if (settings.traktAccessToken) payload.traktAccessToken = settings.traktAccessToken;
+                if (settings.simklAccessToken) payload.simklAccessToken = settings.simklAccessToken;
                 if (settings.metadataAddon) payload.metadataAddon = settings.metadataAddon;
                 return payload;
             }
@@ -1660,12 +1754,21 @@ CONFIG_TEMPLATE = dedent(
 
             function updateTraktUi() {
                 const connected = Boolean(traktAuth.accessToken);
-                const canLogin = simklLoginAvailable;
+                const canLogin = traktLoginAvailable;
                 traktLoginButton.classList.toggle('hidden', !canLogin || connected);
                 traktDisconnectButton.classList.toggle('hidden', !connected);
                 traktLoginButton.disabled = !canLogin || traktPending;
                 traktDisconnectButton.disabled = traktPending || !connected;
                 updateTraktStats();
+            }
+
+            function updateSimklUi() {
+                const connected = Boolean(simklAuth.accessToken);
+                const canLogin = simklLoginAvailable;
+                simklLoginButton.classList.toggle('hidden', !canLogin || connected);
+                simklDisconnectButton.classList.toggle('hidden', !connected);
+                simklLoginButton.disabled = !canLogin || simklPending;
+                simklDisconnectButton.disabled = simklPending || !connected;
             }
 
             function updateTraktStats() {
@@ -1753,16 +1856,16 @@ CONFIG_TEMPLATE = dedent(
             }
 
             function refreshTraktMessaging() {
-                if (!simklLoginAvailable) {
+                if (!traktLoginAvailable) {
                     showTraktStatus(
-                        'Server is not configured with Simkl credentials. Ask the administrator to set SIMKL_CLIENT_ID and SIMKL_CLIENT_SECRET.',
+                        'Server is not configured with Trakt credentials. Ask the administrator to set TRAKT_CLIENT_ID and TRAKT_CLIENT_SECRET.',
                         'error'
                     );
                     showTraktHint('');
                     return;
                 }
                 if (traktPending) {
-                    showTraktStatus('Waiting for you to finish signing in on Simkl…');
+                    showTraktStatus('Waiting for you to finish signing in on Trakt…');
                     showTraktHint('');
                     return;
                 }
@@ -1771,13 +1874,13 @@ CONFIG_TEMPLATE = dedent(
                     const historySynced = history && history.refreshedAt;
                     if (profileStatus && !profileStatus.refreshing && !historySynced) {
                         showTraktStatus(
-                            'Simkl access token is present but history sync did not complete. The token may be expired or invalid.',
+                            'Trakt access token is present but history sync did not complete. The token may be expired or invalid.',
                             'error'
                         );
-                        showTraktHint('Reconnect to Simkl to refresh your access token and restore personalized catalog generation.');
+                        showTraktHint('Reconnect to Trakt to refresh your access token and restore personalized catalog generation.');
                         return;
                     }
-                    showTraktStatus('Simkl connected! Manifest links now include your access token automatically.', 'success');
+                    showTraktStatus('Trakt connected! Manifest links now include your access token automatically.', 'success');
                     if (traktAuth.refreshToken) {
                         showTraktHint('Your tokens are stored locally in this browser so you stay signed in next time.');
                     } else {
@@ -1785,8 +1888,35 @@ CONFIG_TEMPLATE = dedent(
                     }
                     return;
                 }
-                showTraktStatus('Sign in to Simkl to unlock personalised recommendations.');
+                showTraktStatus('Sign in to Trakt to unlock personalised recommendations.');
                 showTraktHint('A secure pop-up will open and you simply approve access—no codes required.');
+            }
+
+            function refreshSimklMessaging() {
+                if (!simklLoginAvailable) {
+                    showSimklStatus(
+                        'Server is not configured with Simkl credentials. Ask the administrator to set SIMKL_CLIENT_ID and SIMKL_CLIENT_SECRET.',
+                        'error'
+                    );
+                    showSimklHint('');
+                    return;
+                }
+                if (simklPending) {
+                    showSimklStatus('Waiting for you to finish signing in on Simkl…');
+                    showSimklHint('');
+                    return;
+                }
+                if (simklAuth.accessToken) {
+                    showSimklStatus('Simkl connected! Manifest links now include your access token automatically.', 'success');
+                    if (simklAuth.refreshToken) {
+                        showSimklHint('Your tokens are stored locally in this browser so you stay signed in next time.');
+                    } else {
+                        showSimklHint('Your access token is stored locally in this browser for manifest generation.');
+                    }
+                    return;
+                }
+                showSimklStatus('Sign in to Simkl to unlock personalised recommendations.');
+                showSimklHint('A secure pop-up will open and you simply approve access—no codes required.');
             }
 
             function applyTraktTokens(tokens, options = {}) {
@@ -1813,6 +1943,30 @@ CONFIG_TEMPLATE = dedent(
                 updateManifestUi();
             }
 
+            function applySimklTokens(tokens, options = {}) {
+                const access = ((tokens && (tokens.access_token || tokens.accessToken)) || '').trim();
+                const refresh = ((tokens && (tokens.refresh_token || tokens.refreshToken)) || '').trim();
+                const previousAccess = simklAuth.accessToken;
+                const previousRefresh = simklAuth.refreshToken;
+                simklAuth.accessToken = access;
+                simklAuth.refreshToken = refresh;
+                persistSimklTokens(access ? { access_token: access, refresh_token: refresh } : null);
+                if (previousAccess !== access || previousRefresh !== refresh) {
+                    markProfileDirty();
+                }
+                updateSimklUi();
+                if (!options.silent) {
+                    if (access) {
+                        refreshSimklMessaging();
+                    } else {
+                        showSimklStatus('Simkl tokens cleared. Sign in again to reconnect.');
+                        showSimklHint('');
+                    }
+                }
+                updateManifestPreview();
+                updateManifestUi();
+            }
+
             function persistTraktTokens(tokens) {
                 try {
                     if (tokens && tokens.access_token) {
@@ -1822,6 +1976,18 @@ CONFIG_TEMPLATE = dedent(
                     }
                 } catch (err) {
                     console.warn('Unable to persist Trakt tokens', err);
+                }
+            }
+
+            function persistSimklTokens(tokens) {
+                try {
+                    if (tokens && tokens.access_token) {
+                        localStorage.setItem('aiopicks.simklTokens', JSON.stringify(tokens));
+                    } else {
+                        localStorage.removeItem('aiopicks.simklTokens');
+                    }
+                } catch (err) {
+                    console.warn('Unable to persist Simkl tokens', err);
                 }
             }
 
@@ -1837,6 +2003,22 @@ CONFIG_TEMPLATE = dedent(
                     }
                 } catch (err) {
                     console.warn('Unable to read stored Trakt tokens', err);
+                }
+                return null;
+            }
+
+            function readStoredSimklTokens() {
+                try {
+                    const raw = localStorage.getItem('aiopicks.simklTokens');
+                    if (!raw) {
+                        return null;
+                    }
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        return parsed;
+                    }
+                } catch (err) {
+                    console.warn('Unable to read stored Simkl tokens', err);
                 }
                 return null;
             }
@@ -1857,6 +2039,24 @@ CONFIG_TEMPLATE = dedent(
 
             function showTraktHint(message) {
                 traktHint.textContent = message;
+            }
+
+            function showSimklStatus(message, variant) {
+                simklStatus.textContent = message;
+                simklStatus.classList.toggle('success', variant === 'success');
+                simklStatus.classList.toggle('error', variant === 'error');
+                if (variant !== 'success' && variant !== 'error' && message) {
+                    simklStatus.classList.remove('success');
+                    simklStatus.classList.remove('error');
+                }
+                if (!message) {
+                    simklStatus.classList.remove('success');
+                    simklStatus.classList.remove('error');
+                }
+            }
+
+            function showSimklHint(message) {
+                simklHint.textContent = message;
             }
 
             function resolveErrorMessage(payload) {

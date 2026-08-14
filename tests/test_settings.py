@@ -76,6 +76,9 @@ def test_render_config_page_uses_simkl_defaults() -> None:
 
     html = render_config_page(settings)
 
+    assert "Connect Trakt" in html
     assert "Connect Simkl" in html
+    assert "Sign in with Trakt" in html
+    assert "Sign in with Simkl" in html
     assert "simklLoginAvailable" in html
     assert "simklAccessToken" in html

@@ -242,17 +242,17 @@ class ProfileState:
     """Snapshot of a stored profile used for runtime decisions."""
 
     id: str
-    openrouter_api_key: str
-    openrouter_model: str
-    generator_mode: str
-    trakt_client_id: str | None
-    trakt_access_token: str | None
-    catalog_keys: tuple[str, ...]
-    catalog_item_count: int
-    generation_retry_limit: int
-    refresh_interval_seconds: int
-    response_cache_seconds: int
-    trakt_history_limit: int
+    openrouter_api_key: str = ""
+    openrouter_model: str = ""
+    generator_mode: str = "openrouter"
+    trakt_client_id: str | None = None
+    trakt_access_token: str | None = None
+    catalog_keys: tuple[str, ...] = ()
+    catalog_item_count: int = 0
+    generation_retry_limit: int = 0
+    refresh_interval_seconds: int = 0
+    response_cache_seconds: int = 0
+    trakt_history_limit: int = 0
     next_refresh_at: datetime | None = None
     last_refreshed_at: datetime | None = None
     simkl_client_id: str | None = None
@@ -352,12 +352,39 @@ class CatalogService:
         settings: Settings,
         trakt_client: TraktClient,
         openrouter_client: OpenRouterClient,
-        openai_client: OpenAIClient,
-        ollama_client: OllamaClient,
-        metadata_client: MetadataAddonClient,
-        session_factory: async_sessionmaker[AsyncSession],
+        openai_client: OpenAIClient | MetadataAddonClient | None = None,
+        ollama_client: OllamaClient | async_sessionmaker[AsyncSession] | None = None,
+        metadata_client: MetadataAddonClient | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
         simkl_client: SimklClient | None = None,
     ):
+        if session_factory is None and isinstance(ollama_client, async_sessionmaker):
+            session_factory = ollama_client
+            ollama_client = None
+
+        if metadata_client is None and openai_client is not None and not isinstance(
+            openai_client, (OpenAIClient, OllamaClient)
+        ):
+            metadata_client = openai_client
+            openai_client = None
+
+        if metadata_client is None and isinstance(openai_client, MetadataAddonClient):
+            metadata_client = openai_client
+            openai_client = None
+
+        if session_factory is None and ollama_client is not None and not isinstance(
+            ollama_client, (OpenAIClient, OllamaClient, MetadataAddonClient)
+        ):
+            session_factory = ollama_client
+            ollama_client = None
+
+        if session_factory is None:
+            raise TypeError(
+                "CatalogService requires a session factory. "
+                "Use CatalogService(settings, trakt, openrouter, openai, ollama, metadata, session_factory, simkl_client=...) "
+                "or the legacy CatalogService(settings, trakt, openrouter, metadata_client, session_factory) form."
+            )
+
         self._settings = settings
         self._trakt = trakt_client
         self._simkl = simkl_client
@@ -525,6 +552,24 @@ class CatalogService:
             await session.refresh(profile)
             return profile
 
+    async def _invoke_refresh_catalogs(
+        self,
+        state: ProfileState,
+        *,
+        force_trakt_history_refresh: bool,
+    ) -> None:
+        """Call refresh hooks while remaining compatible with legacy subclasses."""
+
+        try:
+            await self._refresh_catalogs(
+                state,
+                force_trakt_history_refresh=force_trakt_history_refresh,
+            )
+        except TypeError as exc:
+            if "force_trakt_history_refresh" not in str(exc):
+                raise
+            await self._refresh_catalogs(state)
+
     async def ensure_catalogs(
         self,
         state: ProfileState,
@@ -545,7 +590,7 @@ class CatalogService:
                 await self._ensure_catalog_scope(latest_state)
                 return latest_state
             if wait or not has_catalogs:
-                await self._refresh_catalogs(
+                await self._invoke_refresh_catalogs(
                     latest_state,
                     force_trakt_history_refresh=force_trakt_history_refresh,
                 )
@@ -1580,6 +1625,10 @@ class CatalogService:
         if trakt_identity is not None:
             return trakt_identity
 
+        simkl_identity = await self._profile_id_from_simkl(config)
+        if simkl_identity is not None:
+            return simkl_identity
+
         if slug == "default":
             return ProfileIdentity(id="default")
 
@@ -1603,6 +1652,15 @@ class CatalogService:
             now = datetime.now(timezone.utc)
 
             if profile is None:
+                if profile_id == "default" and not (
+                    config.profile_id
+                    or config.openrouter_key
+                    or config.openai_key
+                    or getattr(self._settings, "openrouter_api_key", None)
+                    or getattr(self._settings, "openai_api_key", None)
+                ):
+                    raise ValueError("No profile context available for catalog lookup")
+
                 desired_mode = (
                     (config.generator_mode or self._settings.generator_mode)
                     if hasattr(self._settings, "generator_mode")
@@ -1645,6 +1703,13 @@ class CatalogService:
                     response_cache_seconds=config.response_cache or self._settings.response_cache_seconds,
                     trakt_client_id=config.trakt_client_id or self._settings.trakt_client_id,
                     trakt_access_token=config.trakt_access_token or self._settings.trakt_access_token,
+                    simkl_client_id=config.simkl_client_id or self._settings.simkl_client_id,
+                    simkl_access_token=config.simkl_access_token or self._settings.simkl_access_token,
+                    simkl_history_limit=(
+                        config.simkl_history_limit
+                        if config.simkl_history_limit is not None
+                        else self._settings.simkl_history_limit
+                    ),
                     trakt_history_limit=(
                         config.trakt_history_limit
                         if config.trakt_history_limit is not None
@@ -1721,6 +1786,12 @@ class CatalogService:
                     refresh_required = True
                 if config.trakt_access_token is not None and config.trakt_access_token != profile.trakt_access_token:
                     profile.trakt_access_token = config.trakt_access_token
+                    refresh_required = True
+                if config.simkl_client_id is not None and config.simkl_client_id != getattr(profile, "simkl_client_id", None):
+                    profile.simkl_client_id = config.simkl_client_id
+                    refresh_required = True
+                if config.simkl_access_token is not None and config.simkl_access_token != getattr(profile, "simkl_access_token", None):
+                    profile.simkl_access_token = config.simkl_access_token
                     refresh_required = True
                 if (
                     config.trakt_history_limit is not None
@@ -1853,6 +1924,39 @@ class CatalogService:
         display_name = fallback_display
         return ProfileIdentity(id=f"trakt-{digest}", display_name=display_name)
 
+    async def _profile_id_from_simkl(
+        self, config: ManifestConfig
+    ) -> ProfileIdentity | None:
+        access_token = config.simkl_access_token or self._settings.simkl_access_token
+        if not access_token:
+            return None
+
+        profile: Mapping[str, Any] | dict[str, Any] = {}
+        try:
+            if self._simkl is not None:
+                fetched = await self._simkl.fetch_user(access_token=access_token)
+                if isinstance(fetched, Mapping):
+                    profile = fetched
+        except Exception:  # pragma: no cover - defensive guard
+            logger.exception("Failed to fetch Simkl profile for ID derivation")
+            profile = {}
+
+        username = profile.get("username")
+        name = profile.get("name")
+        if isinstance(username, str) and username.strip():
+            slug = slugify(username)
+            if slug:
+                return ProfileIdentity(
+                    id=f"simkl-{slug}",
+                    display_name=name if isinstance(name, str) else username,
+                )
+
+        digest = hashlib.sha256(access_token.encode("utf-8")).hexdigest()[:12]
+        return ProfileIdentity(
+            id=f"simkl-{digest}",
+            display_name=name if isinstance(name, str) else None,
+        )
+
     def profile_id_from_catalog_id(self, catalog_id: str) -> str | None:
         profile_id, _ = self._split_scoped_catalog_id(catalog_id)
         return profile_id
@@ -1862,6 +1966,8 @@ class CatalogService:
             profile = await session.get(Profile, "default")
             now = datetime.now(timezone.utc)
             if profile is None:
+                if not (self._settings.openrouter_api_key or self._settings.openai_api_key):
+                    return
                 # Decide default generator mode
                 default_mode = getattr(self._settings, "generator_mode", "openrouter")
                 use_openrouter = default_mode == "openrouter" and bool(self._settings.openrouter_api_key)

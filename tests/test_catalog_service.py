@@ -443,6 +443,40 @@ def test_resolve_profile_persists_trakt_display_name(tmp_path) -> None:
     asyncio.run(runner())
 
 
+def test_resolve_profile_persists_simkl_access_token(tmp_path) -> None:
+    """Simkl tokens should persist on the resolved profile just like Trakt tokens."""
+
+    async def runner() -> None:
+        database_path = tmp_path / "simkl-token.db"
+        database = Database(f"sqlite+aiosqlite:///{database_path}")
+        await database.create_all()
+
+        settings = Settings(_env_file=None, OPENROUTER_API_KEY="test-key")
+        service = CatalogService(
+            settings,
+            cast(TraktClient, object()),
+            cast(OpenRouterClient, object()),
+            cast(MetadataAddonClient, object()),
+            database.session_factory,
+        )
+
+        config = ManifestConfig.model_validate(
+            {"simklAccessToken": "simkl-token-abc", "simklClientId": "simkl-client"}
+        )
+
+        context = await service.resolve_profile(config)
+        assert context.state.simkl_access_token == "simkl-token-abc"
+
+        async with database.session_factory() as session:
+            profile = await session.get(Profile, context.state.id)
+            assert profile is not None
+            assert profile.simkl_access_token == "simkl-token-abc"
+
+        await database.dispose()
+
+    asyncio.run(runner())
+
+
 def test_catalog_lookup_falls_back_to_any_profile(tmp_path) -> None:
     """Catalog retrieval works even when the request lacks profile context."""
 
