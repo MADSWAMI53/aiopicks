@@ -247,17 +247,17 @@ class ProfileState:
     generator_mode: str
     trakt_client_id: str | None
     trakt_access_token: str | None
-    simkl_client_id: str | None = None
-    simkl_access_token: str | None = None
     catalog_keys: tuple[str, ...]
     catalog_item_count: int
     generation_retry_limit: int
     refresh_interval_seconds: int
     response_cache_seconds: int
     trakt_history_limit: int
+    next_refresh_at: datetime | None = None
+    last_refreshed_at: datetime | None = None
+    simkl_client_id: str | None = None
+    simkl_access_token: str | None = None
     simkl_history_limit: int = 0
-    next_refresh_at: datetime | None
-    last_refreshed_at: datetime | None
     metadata_addon_url: str | None = None
     trakt_movie_history_count: int = 0
     trakt_show_history_count: int = 0

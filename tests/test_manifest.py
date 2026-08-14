@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.main import register_routes
-from app.services.catalog_generator import CatalogService, ManifestConfig
+from app.services.catalog_generator import CatalogService, ManifestConfig, ProfileState
 
 
 class DummyCatalogService(CatalogService):
@@ -110,3 +110,25 @@ def test_manifest_rejects_query_overrides() -> None:
         )
 
     assert response.status_code == 400
+
+
+def test_profile_state_allows_simkl_defaults() -> None:
+    """ProfileState should keep required fields first so import-time dataclass errors cannot return."""
+
+    state = ProfileState(
+        id="user-123",
+        openrouter_api_key="key",
+        openrouter_model="model",
+        generator_mode="local",
+        trakt_client_id="trakt-id",
+        trakt_access_token="trakt-token",
+        catalog_keys=("movies-for-you",),
+        catalog_item_count=8,
+        generation_retry_limit=3,
+        refresh_interval_seconds=86400,
+        response_cache_seconds=1800,
+        trakt_history_limit=0,
+    )
+
+    assert state.simkl_history_limit == 0
+    assert state.catalog_keys == ("movies-for-you",)
