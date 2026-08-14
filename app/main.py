@@ -23,6 +23,7 @@ from .services.catalog_generator import ManifestConfig
 from .services.openrouter import OpenRouterClient
 from .services.openai import OpenAIClient
 from .services.trakt import TraktClient
+from .services.simkl import SimklClient
 from .services.ollama import OllamaClient
 from .web import render_config_page
 
@@ -72,6 +73,13 @@ async def lifespan(_: FastAPI):
     await database.create_all()
 
     trakt = TraktClient(settings, trakt_client)
+    simkl_client = await exit_stack.enter_async_context(
+        httpx.AsyncClient(
+            base_url=str(settings.simkl_api_url),
+            timeout=httpx.Timeout(20.0, connect=10.0),
+        )
+    )
+    simkl = SimklClient(settings, simkl_client)
     openrouter = OpenRouterClient(settings, openrouter_client)
     openai = OpenAIClient(settings, openai_client)
     default_metadata_addon = (
@@ -83,7 +91,14 @@ async def lifespan(_: FastAPI):
         metadata_http_client, default_metadata_addon
     )
     catalog_service = CatalogService(
-        settings, trakt, openrouter, openai, ollama, metadata_client, database.session_factory
+        settings,
+        trakt,
+        openrouter,
+        openai,
+        ollama,
+        metadata_client,
+        database.session_factory,
+        simkl_client=simkl,
     )
 
     app.state.catalog_service = catalog_service
@@ -114,6 +129,7 @@ def create_app() -> FastAPI:
     )
 
     fastapi_app.state.trakt_oauth_states = {}  # dict[str, dict[str, Any]]
+    fastapi_app.state.simkl_oauth_states = {}  # dict[str, dict[str, Any]]
 
     register_routes(fastapi_app)
     return fastapi_app
@@ -451,6 +467,157 @@ def register_routes(fastapi_app: FastAPI) -> None:
 
         return JSONResponse(status.to_payload())
 
+    @fastapi_app.post("/api/simkl/login-url")
+    async def simkl_login_url(request: Request) -> dict[str, str]:
+        if not (settings.simkl_client_id and settings.simkl_client_secret):
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "error": "simkl_credentials_missing",
+                    "description": (
+                        "Simkl client ID and secret must be configured on the server "
+                        "to enable sign in."
+                    ),
+                },
+            )
+
+        _prune_expired_states(fastapi_app, "simkl")
+        state = secrets.token_urlsafe(32)
+        default_origin, redirect_uri = _resolve_simkl_redirect(request)
+        origin_header = _normalize_origin_header(request.headers.get("origin"))
+        referer_origin = _origin_from_url(request.headers.get("referer"))
+        origin = origin_header or referer_origin or default_origin
+        fastapi_app.state.simkl_oauth_states[state] = {
+            "origin": origin,
+            "redirect_uri": redirect_uri,
+            "expires_at": time.time() + 600,
+        }
+
+        query = urlencode(
+            {
+                "response_type": "code",
+                "client_id": settings.simkl_client_id,
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "scope": "read" if not settings.simkl_client_secret else "read",
+            }
+        )
+        return {"url": f"{settings.simkl_authorize_url}?{query}"}
+
+    @fastapi_app.get(
+        "/api/simkl/callback",
+        response_class=HTMLResponse,
+        name="simkl_oauth_callback",
+    )
+    async def simkl_oauth_callback(
+        request: Request,
+        code: str | None = None,
+        state: str | None = None,
+        error: str | None = None,
+        error_description: str | None = None,
+    ) -> HTMLResponse:
+        _prune_expired_states(fastapi_app, "simkl")
+        default_origin, default_redirect = _resolve_simkl_redirect(request)
+
+        if not state:
+            payload = {
+                "status": "error",
+                "error": "missing_state",
+                "error_description": "State parameter was not returned by Simkl.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(default_origin, payload, provider="simkl"),
+                status_code=400,
+            )
+
+        state_data = fastapi_app.state.simkl_oauth_states.pop(state, None)
+        origin = (state_data or {}).get("origin") or default_origin
+        redirect_uri = (state_data or {}).get("redirect_uri") or default_redirect
+
+        if not state_data or state_data.get("expires_at", 0) < time.time():
+            payload = {
+                "status": "error",
+                "error": "state_expired",
+                "error_description": "The sign-in session has expired. Please try again.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload),
+                status_code=400,
+            )
+
+        if error:
+            payload = {
+                "status": "error",
+                "error": error,
+                "error_description": error_description or "Simkl reported an error during sign in.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="simkl"),
+                status_code=400,
+            )
+
+        if not code:
+            payload = {
+                "status": "error",
+                "error": "missing_code",
+                "error_description": "Simkl did not provide an authorisation code.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="simkl"),
+                status_code=400,
+            )
+
+        body = {
+            "code": code,
+            "client_id": settings.simkl_client_id,
+            "client_secret": settings.simkl_client_secret,
+            "redirect_uri": redirect_uri,
+            "grant_type": "authorization_code",
+        }
+        try:
+            response = await _post_simkl_oauth(str(settings.simkl_token_url), body)
+        except httpx.HTTPError:
+            payload = {
+                "status": "error",
+                "error": "network_error",
+                "error_description": "Unable to reach Simkl. Please try again shortly.",
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="simkl"),
+                status_code=502,
+            )
+
+        data = _response_json(response)
+        if response.status_code >= 400:
+            payload = {
+                "status": "error",
+                "error": "simkl_error",
+                "error_description": str(data.get("error") or "Simkl rejected the authorisation request."),
+            }
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="simkl"),
+                status_code=response.status_code,
+            )
+
+        access_token = data.get("access_token")
+        refresh_token = data.get("refresh_token")
+        expires_in = _coerce_int(data.get("expires_in"))
+        token_payload = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expires_in": expires_in,
+            "scope": data.get("scope"),
+            "token_type": data.get("token_type"),
+            "created_at": _coerce_int(data.get("created_at")),
+        }
+        payload = {
+            "status": "success",
+            "tokens": {
+                key: value for key, value in token_payload.items() if value not in {None, ""}
+            },
+        }
+        return HTMLResponse(_render_oauth_popup(origin, payload, provider="simkl"))
+
     @fastapi_app.post("/api/trakt/login-url")
     async def trakt_login_url(request: Request) -> dict[str, str]:
         if not (settings.trakt_client_id and settings.trakt_client_secret):
@@ -509,7 +676,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error_description": "State parameter was not returned by Trakt.",
             }
             return HTMLResponse(
-                _render_oauth_popup(default_origin, payload),
+                _render_oauth_popup(default_origin, payload, provider="trakt"),
                 status_code=400,
             )
 
@@ -524,7 +691,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error_description": "The sign-in session has expired. Please try again.",
             }
             return HTMLResponse(
-                _render_oauth_popup(origin, payload),
+                _render_oauth_popup(origin, payload, provider="trakt"),
                 status_code=400,
             )
 
@@ -535,7 +702,10 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error_description": error_description
                 or "Trakt reported an error during sign in.",
             }
-            return HTMLResponse(_render_oauth_popup(origin, payload), status_code=400)
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="trakt"),
+                status_code=400,
+            )
 
         if not code:
             payload = {
@@ -544,7 +714,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error_description": "Trakt did not provide an authorisation code.",
             }
             return HTMLResponse(
-                _render_oauth_popup(origin, payload),
+                _render_oauth_popup(origin, payload, provider="trakt"),
                 status_code=400,
             )
 
@@ -563,7 +733,10 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 "error": "network_error",
                 "error_description": "Unable to reach Trakt. Please try again shortly.",
             }
-            return HTMLResponse(_render_oauth_popup(origin, payload), status_code=502)
+            return HTMLResponse(
+                _render_oauth_popup(origin, payload, provider="trakt"),
+                status_code=502,
+            )
 
         data = _response_json(response)
         if response.status_code >= 400:
@@ -578,7 +751,7 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 ),
             }
             return HTMLResponse(
-                _render_oauth_popup(origin, payload),
+                _render_oauth_popup(origin, payload, provider="trakt"),
                 status_code=response.status_code,
             )
 
@@ -634,11 +807,12 @@ def register_routes(fastapi_app: FastAPI) -> None:
                 if value not in {None, ""}
             },
         }
-        return HTMLResponse(_render_oauth_popup(origin, payload))
+        return HTMLResponse(_render_oauth_popup(origin, payload, provider="trakt"))
 
 
-def _prune_expired_states(fastapi_app: FastAPI) -> None:
-    store = getattr(fastapi_app.state, "trakt_oauth_states", {})
+def _prune_expired_states(fastapi_app: FastAPI, provider: str = "trakt") -> None:
+    store_name = f"{provider}_oauth_states"
+    store = getattr(fastapi_app.state, store_name, {})
     now = time.time()
     expired = [key for key, info in store.items() if info.get("expires_at", 0) <= now]
     for key in expired:
@@ -653,6 +827,17 @@ def _resolve_trakt_redirect(request: Request) -> tuple[str, str]:
 
     origin, base = _resolve_external_base(request)
     path = request.app.url_path_for("trakt_oauth_callback")
+    return origin, f"{base}{path}"
+
+
+def _resolve_simkl_redirect(request: Request) -> tuple[str, str]:
+    if settings.simkl_redirect_uri:
+        parsed = urlparse(str(settings.simkl_redirect_uri))
+        origin = f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
+        return origin, str(settings.simkl_redirect_uri)
+
+    origin, base = _resolve_external_base(request)
+    path = request.app.url_path_for("simkl_oauth_callback")
     return origin, f"{base}{path}"
 
 
@@ -715,27 +900,38 @@ def _origin_from_url(url_value: str | None) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}".rstrip("/")
 
 
-def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
-    message = {"source": "trakt-oauth", **payload}
+def _render_oauth_popup(
+    target_origin: str,
+    payload: dict[str, Any],
+    *,
+    provider: str = "trakt",
+) -> str:
+    provider_key = provider.lower()
+    source = f"{provider_key}-oauth"
+    message = {"source": source, **payload}
     status = str(payload.get("status") or "").lower()
     tokens = message.get("tokens")
+    type_name = f"{provider_key.upper()}_AUTH_SUCCESS"
     if status == "success" and isinstance(tokens, dict):
-        message.setdefault("type", "TRAKT_AUTH_SUCCESS")
+        message.setdefault("type", type_name)
         for key in ("access_token", "refresh_token", "expires_in", "scope", "token_type"):
             value = tokens.get(key)
             if value not in {None, ""}:
                 message.setdefault(key, value)
     elif status:
-        message.setdefault("type", "TRAKT_AUTH_ERROR")
+        message.setdefault("type", f"{provider_key.upper()}_AUTH_ERROR")
 
     json_payload = json.dumps(message).replace("</", "<\\/")
     origin = target_origin or "*"
+    title = "Trakt Sign In" if provider_key == "trakt" else "Simkl Sign In"
+    channel_name = f"aiopicks.{provider_key}-oauth"
+    log_label = provider_key.title()
     return f"""
 <!DOCTYPE html>
 <html lang=\"en\">
 <head>
     <meta charset=\"utf-8\" />
-    <title>Trakt Sign In</title>
+    <title>{title}</title>
 </head>
 <body>
     <p>You can close this window and return to the configuration tab.</p>
@@ -762,16 +958,16 @@ def _render_oauth_popup(target_origin: str, payload: dict[str, Any]) -> str:
             }}
             try {{
                 if ('BroadcastChannel' in window) {{
-                    const channel = new BroadcastChannel('aiopicks.trakt-oauth');
+                    const channel = new BroadcastChannel({json.dumps(channel_name)});
                     channel.postMessage(payload);
                     channel.close();
                     notified = true;
                 }}
             }} catch (err) {{
-                console.error('Unable to broadcast Trakt OAuth payload', err);
+                console.error('Unable to broadcast {log_label} OAuth payload', err);
             }}
             if (!notified) {{
-                console.warn('Trakt OAuth payload could not be delivered to the opener context.');
+                console.warn('{log_label} OAuth payload could not be delivered to the opener context.');
             }}
             setTimeout(() => {{
                 window.close();

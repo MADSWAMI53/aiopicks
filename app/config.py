@@ -48,6 +48,27 @@ class Settings(BaseSettings):
         ),
     )
 
+    simkl_client_id: str | None = Field(default=None, alias="SIMKL_CLIENT_ID")
+    simkl_client_secret: str | None = Field(
+        default=None, alias="SIMKL_CLIENT_SECRET"
+    )
+    simkl_access_token: str | None = Field(default=None, alias="SIMKL_ACCESS_TOKEN")
+    simkl_redirect_uri: HttpUrl | None = Field(
+        default=None, alias="SIMKL_REDIRECT_URI"
+    )
+    simkl_history_limit: int = Field(
+        default=0, alias="SIMKL_HISTORY_LIMIT", ge=0, le=10_000
+    )
+    simkl_history_cache_ttl_seconds: int = Field(
+        default=0,
+        alias="SIMKL_HISTORY_CACHE_TTL_SECONDS",
+        ge=0,
+        description=(
+            "Cache compacted Simkl history per profile/type for this many seconds. "
+            "0 disables caching."
+        ),
+    )
+
     openrouter_api_key: str | None = Field(
         default=None, alias="OPENROUTER_API_KEY"
     )
@@ -89,6 +110,15 @@ class Settings(BaseSettings):
     )
     trakt_authorize_url: HttpUrl = Field(
         default="https://trakt.tv/oauth/authorize", alias="TRAKT_AUTHORIZE_URL"
+    )
+    simkl_api_url: HttpUrl = Field(
+        default="https://api.simkl.com", alias="SIMKL_API_URL"
+    )
+    simkl_authorize_url: HttpUrl = Field(
+        default="https://simkl.com/oauth/authorize", alias="SIMKL_AUTHORIZE_URL"
+    )
+    simkl_token_url: HttpUrl = Field(
+        default="https://api.simkl.com/oauth/token", alias="SIMKL_TOKEN_URL"
     )
     openrouter_api_url: HttpUrl = Field(
         default="https://openrouter.ai/api/v1", alias="OPENROUTER_API_URL"
@@ -153,9 +183,47 @@ class Settings(BaseSettings):
             return DEFAULT_CATALOG_KEYS
         return tuple(cleaned)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_catalog_count(cls, data: object) -> object:
+        """Reject explicit catalog counts that disagree with the configured keys."""
+
+        if not isinstance(data, dict):
+            return data
+
+        supplied_count = data.get("CATALOG_COUNT", data.get("catalog_count"))
+        if supplied_count is None:
+            return data
+
+        keys_value = data.get("CATALOG_KEYS", data.get("catalog_keys"))
+        if keys_value is None:
+            return data
+
+        if isinstance(keys_value, str):
+            values = [part.strip() for part in keys_value.split(",")]
+        elif isinstance(keys_value, Iterable):
+            values = [str(part).strip() for part in keys_value]
+        else:
+            values = [str(keys_value).strip()]
+
+        normalized: list[str] = []
+        for entry in values:
+            if not entry:
+                continue
+            slug = entry.replace("_", "-").replace(" ", "-").lower()
+            slug = "-".join(filter(None, slug.split("-")))
+            if slug:
+                normalized.append(slug)
+
+        if len(normalized) != int(supplied_count):
+            raise ValueError(
+                "Catalog count must match the number of configured catalog keys"
+            )
+        return data
+
     @model_validator(mode="after")
     def _sync_catalog_configuration(self) -> "Settings":
-        """Ensure catalog counts mirror the configured keys."""
+        """Keep the catalog count aligned with the selected catalog keys."""
 
         self.catalog_count = len(self.catalog_keys)
         return self

@@ -363,11 +363,11 @@ CONFIG_TEMPLATE = dedent(
             <header>
             <p class="pill">Stremio Add-on</p>
             <h1>Configure __APP_NAME__</h1>
-            <p>Connect your Trakt account, dial in the catalog cadence, and copy an install-ready link for Stremio.</p>
+            <p>Connect your Simkl account, dial in the catalog cadence, and copy an install-ready link for Stremio.</p>
         </header>
         <div class="grid">
             <section class="card" id="trakt-card">
-                <h2>Connect Trakt</h2>
+                <h2>Connect Simkl</h2>
                 <p class="description">Sign in seamlessly—no device codes or copy/paste hoops required.</p>
                 <p class="muted" id="trakt-hint"></p>
                 <div class="actions">
@@ -926,24 +926,24 @@ CONFIG_TEMPLATE = dedent(
                 }
                 traktPending = true;
                 updateTraktUi();
-                showTraktStatus('Opening Trakt sign in…');
-                showTraktHint('A secure pop-up will appear. Approve access in Trakt and this page will update automatically.');
+                showTraktStatus('Opening Simkl sign in…');
+                showTraktHint('A secure pop-up will appear. Approve access in Simkl and this page will update automatically.');
                 try {
-                    const response = await fetch('/api/trakt/login-url', { method: 'POST' });
+                    const response = await fetch('/api/simkl/login-url', { method: 'POST' });
                     const payload = await response.json().catch(() => ({}));
                     if (!response.ok || !payload.url) {
                         traktPending = false;
                         updateTraktUi();
-                        showTraktStatus(resolveErrorMessage(payload) || 'Unable to start Trakt sign in.', 'error');
+                        showTraktStatus(resolveErrorMessage(payload) || 'Unable to start Simkl sign in.', 'error');
                         showTraktHint('Please try again in a moment.');
                         return;
                     }
-                    const popup = window.open(payload.url, 'trakt-sign-in', 'width=600,height=780');
+                    const popup = window.open(payload.url, 'simkl-sign-in', 'width=600,height=780');
                     if (!popup) {
                         traktPending = false;
                         updateTraktUi();
-                        showTraktStatus('Allow pop-ups for this site to continue with Trakt sign in.', 'error');
-                        showTraktHint('After enabling pop-ups, click “Sign in with Trakt” again.');
+                        showTraktStatus('Allow pop-ups for this site to continue with Simkl sign in.', 'error');
+                        showTraktHint('After enabling pop-ups, click “Sign in with Simkl” again.');
                         return;
                     }
                     popup.focus();
@@ -951,7 +951,7 @@ CONFIG_TEMPLATE = dedent(
                     console.error(error);
                     traktPending = false;
                     updateTraktUi();
-                    showTraktStatus('Could not reach the server to start Trakt sign in.', 'error');
+                    showTraktStatus('Could not reach the server to start Simkl sign in.', 'error');
                     showTraktHint('Check your connection and try again.');
                 }
             });
@@ -965,7 +965,7 @@ CONFIG_TEMPLATE = dedent(
                 persistTraktTokens(null);
                 updateManifestPreview();
                 updateTraktUi();
-                showTraktStatus('Trakt disconnected. Sign in again to reconnect.');
+                showTraktStatus('Simkl disconnected. Sign in again to reconnect.');
                 showTraktHint('');
             });
 
@@ -980,14 +980,15 @@ CONFIG_TEMPLATE = dedent(
                     try {
                         data = JSON.parse(data);
                     } catch (err) {
-                        console.warn('Ignoring malformed Trakt OAuth payload', err);
+                        console.warn('Ignoring malformed OAuth payload', err);
                         return null;
                     }
                 }
                 if (!data || typeof data !== 'object') {
                     return null;
                 }
-                if (data.source === 'trakt-oauth') {
+                const source = typeof data.source === 'string' ? data.source.toLowerCase() : '';
+                if (source === 'trakt-oauth' || source === 'simkl-oauth') {
                     if (!data.tokens && (data.access_token || data.refresh_token)) {
                         data.tokens = {
                             access_token: data.access_token || data.accessToken || '',
@@ -997,7 +998,7 @@ CONFIG_TEMPLATE = dedent(
                     return data;
                 }
                 const type = typeof data.type === 'string' ? data.type.toUpperCase() : '';
-                if (type === 'TRAKT_AUTH_SUCCESS') {
+                if (type === 'TRAKT_AUTH_SUCCESS' || type === 'SIMKL_AUTH_SUCCESS') {
                     const tokens = {
                         access_token: data.access_token || data.accessToken || '',
                         refresh_token: data.refresh_token || data.refreshToken || '',
@@ -1012,16 +1013,16 @@ CONFIG_TEMPLATE = dedent(
                         tokens.token_type = data.token_type;
                     }
                     return {
-                        source: 'trakt-oauth',
+                        source: type.includes('SIMKL') ? 'simkl-oauth' : 'trakt-oauth',
                         status: 'success',
                         tokens,
                     };
                 }
-                if (type === 'TRAKT_AUTH_ERROR') {
+                if (type === 'TRAKT_AUTH_ERROR' || type === 'SIMKL_AUTH_ERROR') {
                     return {
-                        source: 'trakt-oauth',
+                        source: type.includes('SIMKL') ? 'simkl-oauth' : 'trakt-oauth',
                         status: 'error',
-                        error: data.error || data.message || 'trakt_error',
+                        error: data.error || data.message || 'oauth_error',
                         error_description: data.error_description || data.description || '',
                     };
                 }
@@ -1030,7 +1031,7 @@ CONFIG_TEMPLATE = dedent(
 
             function handleTraktOauthPayload(rawPayload, origin) {
                 const data = normalizeTraktOauthPayload(rawPayload);
-                if (!data || data.source !== 'trakt-oauth') {
+                if (!data || (data.source !== 'trakt-oauth' && data.source !== 'simkl-oauth')) {
                     return;
                 }
                 if (origin && !traktOrigins.includes(origin)) {
@@ -1043,14 +1044,14 @@ CONFIG_TEMPLATE = dedent(
                     refreshTraktMessaging();
                     void fetchProfileStatus({ useConfig: true });
                 } else if (data.status === 'success') {
-                    showTraktStatus('Trakt did not return an access token. Please try again.', 'error');
-                    showTraktHint('Approve the access request in the Trakt window to finish linking.');
+                    showTraktStatus('Simkl did not return an access token. Please try again.', 'error');
+                    showTraktHint('Approve the access request in the Simkl window to finish linking.');
                 } else {
                     showTraktStatus(
-                        data.error_description || data.error || 'Trakt rejected the sign in request.',
+                        data.error_description || data.error || 'Sign in request was rejected.',
                         'error'
                     );
-                    showTraktHint('Try again and ensure you approve the request in Trakt.');
+                    showTraktHint('Try again and ensure you approve the request in the sign-in window.');
                 }
             }
 
@@ -1759,7 +1760,7 @@ CONFIG_TEMPLATE = dedent(
                     return;
                 }
                 if (traktPending) {
-                    showTraktStatus('Waiting for you to finish signing in on Trakt…');
+                    showTraktStatus('Waiting for you to finish signing in on Simkl…');
                     showTraktHint('');
                     return;
                 }
@@ -1768,13 +1769,13 @@ CONFIG_TEMPLATE = dedent(
                     const historySynced = history && history.refreshedAt;
                     if (profileStatus && !profileStatus.refreshing && !historySynced) {
                         showTraktStatus(
-                            'Trakt access token is present but history sync did not complete. The token may be expired or invalid.',
+                            'Simkl access token is present but history sync did not complete. The token may be expired or invalid.',
                             'error'
                         );
-                        showTraktHint('Reconnect to Trakt to refresh your access token and restore personalized catalog generation.');
+                        showTraktHint('Reconnect to Simkl to refresh your access token and restore personalized catalog generation.');
                         return;
                     }
-                    showTraktStatus('Trakt connected! Manifest links now include your access token automatically.', 'success');
+                    showTraktStatus('Simkl connected! Manifest links now include your access token automatically.', 'success');
                     if (traktAuth.refreshToken) {
                         showTraktHint('Your tokens are stored locally in this browser so you stay signed in next time.');
                     } else {
@@ -1782,7 +1783,7 @@ CONFIG_TEMPLATE = dedent(
                     }
                     return;
                 }
-                showTraktStatus('Sign in to Trakt to unlock personalised recommendations.');
+                showTraktStatus('Sign in to Simkl to unlock personalised recommendations.');
                 showTraktHint('A secure pop-up will open and you simply approve access—no codes required.');
             }
 
@@ -1900,13 +1901,19 @@ def render_config_page(settings: Settings, *, callback_origin: str = "") -> str:
         "catalogKeys": list(settings.catalog_keys),
         "generationRetryLimit": settings.generation_retry_limit,
         "traktHistoryLimit": settings.trakt_history_limit,
+        "simklHistoryLimit": settings.simkl_history_limit,
         "refreshIntervalSeconds": settings.refresh_interval_seconds,
         "responseCacheSeconds": settings.response_cache_seconds,
         "traktAccessToken": settings.trakt_access_token or "",
+        "simklAccessToken": settings.simkl_access_token or "",
         "traktLoginAvailable": bool(
             settings.trakt_client_id and settings.trakt_client_secret
         ),
+        "simklLoginAvailable": bool(
+            settings.simkl_client_id and settings.simkl_client_secret
+        ),
         "traktCallbackOrigin": resolved_callback_origin,
+        "simklCallbackOrigin": resolved_callback_origin,
         "metadataAddon": (
             str(settings.metadata_addon_url) if settings.metadata_addon_url else ""
         ),

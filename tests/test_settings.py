@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.config import Settings, DEFAULT_CATALOG_KEYS
+from app.web import render_config_page
 
 
 def test_catalog_keys_subset_selection() -> None:
@@ -61,3 +62,20 @@ def test_catalog_count_must_match_keys() -> None:
             CATALOG_KEYS="movies-for-you",
             CATALOG_COUNT=2,
         )
+
+
+def test_render_config_page_uses_simkl_defaults() -> None:
+    """The HTML config page should advertise Simkl login and defaults."""
+
+    settings = Settings(
+        _env_file=None,
+        APP_NAME="Test App",
+        SIMKL_CLIENT_ID="simkl-client-id",
+        SIMKL_CLIENT_SECRET="simkl-client-secret",
+    )
+
+    html = render_config_page(settings)
+
+    assert "Connect Simkl" in html
+    assert "simklLoginAvailable" in html
+    assert "simklAccessToken" in html

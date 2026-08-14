@@ -75,6 +75,19 @@ class Database:
                 )
             )
         _ensure_column(
+            "simkl_client_id",
+            "ALTER TABLE profiles ADD COLUMN simkl_client_id VARCHAR(200)",
+        )
+        _ensure_column(
+            "simkl_access_token",
+            "ALTER TABLE profiles ADD COLUMN simkl_access_token VARCHAR(200)",
+        )
+        _ensure_column(
+            "simkl_history_limit",
+            "ALTER TABLE profiles ADD COLUMN simkl_history_limit INTEGER DEFAULT 0",
+            "UPDATE profiles SET simkl_history_limit = 0 WHERE simkl_history_limit IS NULL",
+        )
+        _ensure_column(
             "trakt_movie_history_count",
             "ALTER TABLE profiles ADD COLUMN trakt_movie_history_count INTEGER DEFAULT 0",
             (

@@ -34,6 +34,7 @@ from .openrouter import OpenRouterClient
 from .openai import OpenAIClient
 from .ollama import OllamaClient
 from .trakt import HistoryBatch, TraktClient
+from .simkl import SimklClient
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +116,20 @@ class ManifestConfig(BaseModel):
     trakt_access_token: str | None = Field(
         default=None,
         validation_alias=AliasChoices("traktAccessToken", "traktToken"),
+    )
+    simkl_history_limit: int | None = Field(
+        default=None,
+        ge=0,
+        le=10_000,
+        validation_alias=AliasChoices("simklHistoryLimit", "simklHistory"),
+    )
+    simkl_client_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("simklClientId", "simklClientID"),
+    )
+    simkl_access_token: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("simklAccessToken", "simklToken"),
     )
     metadata_addon_url: HttpUrl | None = Field(
         default=None,
@@ -232,12 +247,15 @@ class ProfileState:
     generator_mode: str
     trakt_client_id: str | None
     trakt_access_token: str | None
+    simkl_client_id: str | None = None
+    simkl_access_token: str | None = None
     catalog_keys: tuple[str, ...]
     catalog_item_count: int
     generation_retry_limit: int
     refresh_interval_seconds: int
     response_cache_seconds: int
     trakt_history_limit: int
+    simkl_history_limit: int = 0
     next_refresh_at: datetime | None
     last_refreshed_at: datetime | None
     metadata_addon_url: str | None = None
@@ -338,9 +356,11 @@ class CatalogService:
         ollama_client: OllamaClient,
         metadata_client: MetadataAddonClient,
         session_factory: async_sessionmaker[AsyncSession],
+        simkl_client: SimklClient | None = None,
     ):
         self._settings = settings
         self._trakt = trakt_client
+        self._simkl = simkl_client
         self._openrouter = openrouter_client
         self._openai = openai_client
         self._ollama = ollama_client
@@ -784,6 +804,13 @@ class CatalogService:
             )
             await session.commit()
 
+    def _preferred_history_client(self, state: ProfileState):
+        if self._simkl is not None and (
+            state.simkl_access_token or self._settings.simkl_access_token
+        ):
+            return self._simkl
+        return self._trakt
+
     async def _fetch_trakt_history_for_refresh(
         self,
         state: ProfileState,
@@ -794,6 +821,7 @@ class CatalogService:
     ) -> HistoryBatch:
         history_limit = self._effective_trakt_history_limit(state)
         ttl_seconds = int(getattr(self._settings, "trakt_history_cache_ttl_seconds", 0) or 0)
+        history_client = self._preferred_history_client(state)
 
         if ttl_seconds > 0 and not force_refresh:
             cached = await self._load_trakt_history_cache(
@@ -804,12 +832,19 @@ class CatalogService:
             if cached is not None:
                 return cached
 
-        batch = await self._trakt.fetch_history(
-            content_type,
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-            limit=history_limit,
-        )
+        if history_client is self._simkl:
+            batch = await history_client.fetch_history(
+                content_type,
+                access_token=state.simkl_access_token or self._settings.simkl_access_token,
+                limit=history_limit,
+            )
+        else:
+            batch = await history_client.fetch_history(
+                content_type,
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+                limit=history_limit,
+            )
         compact_items = self._compact_trakt_history_items(batch.items, key=key)
         compact_batch = HistoryBatch(
             items=compact_items,
@@ -1070,6 +1105,8 @@ class CatalogService:
             generator_mode=getattr(profile, "generator_mode", "openrouter") or "openrouter",
             trakt_client_id=profile.trakt_client_id,
             trakt_access_token=profile.trakt_access_token,
+            simkl_client_id=getattr(profile, "simkl_client_id", None),
+            simkl_access_token=getattr(profile, "simkl_access_token", None),
             catalog_keys=self._normalise_catalog_keys(
                 getattr(profile, "catalog_keys", None)
             ),
@@ -1087,6 +1124,11 @@ class CatalogService:
                 profile,
                 "trakt_history_limit",
                 self._settings.trakt_history_limit,
+            ),
+            simkl_history_limit=getattr(
+                profile,
+                "simkl_history_limit",
+                self._settings.simkl_history_limit,
             ),
             next_refresh_at=ensure_utc_datetime(profile.next_refresh_at),
             last_refreshed_at=ensure_utc_datetime(profile.last_refreshed_at),
@@ -1122,13 +1164,20 @@ class CatalogService:
         )
         snapshot: dict[str, Any] | None = None
 
-        if not state.trakt_access_token:
+        active_client = self._preferred_history_client(state)
+        token = (
+            state.simkl_access_token if active_client is self._simkl else state.trakt_access_token
+        )
+        if not token:
             return movie_total, show_total, snapshot
 
-        stats = await self._trakt.fetch_stats(
-            client_id=state.trakt_client_id,
-            access_token=state.trakt_access_token,
-        )
+        if active_client is self._simkl:
+            stats = await active_client.fetch_stats(access_token=token)
+        else:
+            stats = await active_client.fetch_stats(
+                client_id=state.trakt_client_id,
+                access_token=state.trakt_access_token,
+            )
         if stats:
             movie_watched = self._extract_trakt_watched(stats, "movies")
             show_watched = self._extract_trakt_watched(stats, "shows")
@@ -1264,27 +1313,42 @@ class CatalogService:
     ) -> ProfileState:
         """Refresh cached Trakt counts if the data is stale."""
 
-        if not state.trakt_access_token:
+        if not (state.trakt_access_token or state.simkl_access_token):
             return state
 
         refreshed_at = ensure_utc_datetime(state.trakt_history_refreshed_at)
         if refreshed_at and datetime.now(timezone.utc) - refreshed_at < timedelta(hours=12):
             return state
 
-        movie_batch, show_batch = await asyncio.gather(
-            self._trakt.fetch_history(
-                "movies",
-                client_id=state.trakt_client_id,
-                access_token=state.trakt_access_token,
-                limit=1,
-            ),
-            self._trakt.fetch_history(
-                "shows",
-                client_id=state.trakt_client_id,
-                access_token=state.trakt_access_token,
-                limit=1,
-            ),
-        )
+        history_client = self._preferred_history_client(state)
+        if history_client is self._simkl:
+            movie_batch, show_batch = await asyncio.gather(
+                history_client.fetch_history(
+                    "movies",
+                    access_token=state.simkl_access_token or self._settings.simkl_access_token,
+                    limit=1,
+                ),
+                history_client.fetch_history(
+                    "shows",
+                    access_token=state.simkl_access_token or self._settings.simkl_access_token,
+                    limit=1,
+                ),
+            )
+        else:
+            movie_batch, show_batch = await asyncio.gather(
+                history_client.fetch_history(
+                    "movies",
+                    client_id=state.trakt_client_id,
+                    access_token=state.trakt_access_token,
+                    limit=1,
+                ),
+                history_client.fetch_history(
+                    "shows",
+                    client_id=state.trakt_client_id,
+                    access_token=state.trakt_access_token,
+                    limit=1,
+                ),
+            )
 
         movie_total, show_total, snapshot = await self._gather_trakt_history_metadata(
             state,
