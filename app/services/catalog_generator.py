@@ -776,6 +776,18 @@ class CatalogService:
             limit = 10_000
         return limit
 
+    def _effective_simkl_history_limit(self, state: ProfileState) -> int:
+        value = getattr(state, "simkl_history_limit", 0)
+        try:
+            limit = int(value)
+        except (TypeError, ValueError):
+            limit = int(getattr(self._settings, "simkl_history_limit", 0))
+        if limit < 0:
+            limit = 0
+        if limit > 10_000:
+            limit = 10_000
+        return limit
+
     async def _load_trakt_history_cache(
         self,
         profile_id: str,
@@ -878,12 +890,14 @@ class CatalogService:
                 return cached
 
         if history_client is self._simkl:
+            history_limit = self._effective_simkl_history_limit(state)
             batch = await history_client.fetch_history(
                 content_type,
                 access_token=state.simkl_access_token or self._settings.simkl_access_token,
                 limit=history_limit,
             )
         else:
+            history_limit = self._effective_trakt_history_limit(state)
             batch = await history_client.fetch_history(
                 content_type,
                 client_id=state.trakt_client_id,

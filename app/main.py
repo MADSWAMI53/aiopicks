@@ -388,6 +388,9 @@ def register_routes(fastapi_app: FastAPI) -> None:
                     cfg.trakt_history_limit,
                     cfg.trakt_client_id,
                     cfg.trakt_access_token,
+                    cfg.simkl_history_limit,
+                    cfg.simkl_client_id,
+                    cfg.simkl_access_token,
                     cfg.metadata_addon_url,
                 )
             )
@@ -418,6 +421,21 @@ def register_routes(fastapi_app: FastAPI) -> None:
             if (
                 config.trakt_history_limit is not None
                 and state.trakt_history_limit != config.trakt_history_limit
+            ):
+                return True
+            if (
+                config.simkl_access_token is not None
+                and state.simkl_access_token != config.simkl_access_token
+            ):
+                return True
+            if (
+                config.simkl_client_id is not None
+                and state.simkl_client_id != config.simkl_client_id
+            ):
+                return True
+            if (
+                config.simkl_history_limit is not None
+                and state.simkl_history_limit != config.simkl_history_limit
             ):
                 return True
             if (

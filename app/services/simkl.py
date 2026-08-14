@@ -44,6 +44,9 @@ class SimklClient:
         resolved_access_token = access_token or self._settings.simkl_access_token
         if resolved_access_token:
             headers["Authorization"] = f"Bearer {resolved_access_token}"
+        resolved_client_id = self._settings.simkl_client_id
+        if resolved_client_id:
+            headers["simkl-api-key"] = resolved_client_id
         return headers
 
     async def fetch_user(
@@ -66,12 +69,15 @@ class SimklClient:
             logger.warning("Failed to fetch Simkl user: %s", exc)
             return {}
 
-        if response.status_code == 401:
-            logger.warning("Simkl returned 401 Unauthorized for user fetch; access token may be invalid or expired.")
-            return {}
-        if 500 <= response.status_code < 600:
-            logger.warning("Failed to fetch Simkl user: %s", response.text)
-            return {}
+            if response.status_code == 401:
+                logger.warning("Simkl returned 401 Unauthorized for user fetch; access token may be invalid or expired.")
+                return {}
+            if 400 <= response.status_code < 500:
+                logger.warning("Simkl 4xx during user fetch: %s %s", response.status_code, response.text[:200])
+                return {}
+            if 500 <= response.status_code < 600:
+                logger.warning("Failed to fetch Simkl user: %s", response.text)
+                return {}
 
         try:
             data = response.json()
@@ -132,6 +138,9 @@ class SimklClient:
             if response.status_code == 401:
                 logger.warning("Simkl returned 401 Unauthorized for %s history; access token may be invalid or expired.", content_type)
                 return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
+            if 400 <= response.status_code < 500:
+                logger.warning("Simkl 4xx during history fetch for %s (page %s): %s %s", content_type, page, response.status_code, response.text[:200])
+                return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
             if 500 <= response.status_code < 600:
                 logger.warning("Simkl 5xx during history fetch for %s: %s", content_type, response.text)
                 return HistoryBatch(items=collected, total=total or len(collected), fetched=False)
@@ -187,7 +196,7 @@ class SimklClient:
 
         try:
             response = await self._client.get(
-                "/users/{username}/stats",
+                "/users/me/stats",
                 headers=self._headers(access_token=resolved_access_token),
             )
         except httpx.HTTPError as exc:
@@ -197,7 +206,12 @@ class SimklClient:
         if response.status_code == 401:
             logger.warning("Simkl returned 401 Unauthorized for stats fetch; access token may be invalid or expired.")
             return {}
+        if 400 <= response.status_code < 500:
+            logger.warning("Simkl 4xx during stats fetch: %s %s", response.status_code, response.text[:200])
+            return {}
         if 500 <= response.status_code < 600:
+            logger.warning("Failed to fetch Simkl stats: %s", response.text)
+            return {}
             logger.warning("Failed to fetch Simkl stats: %s", response.text)
             return {}
 
